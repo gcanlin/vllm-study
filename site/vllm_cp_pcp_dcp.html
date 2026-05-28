@@ -1,0 +1,1400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>vLLM Context Parallel（PCP & DCP）从切分到通信</title>
+<style>
+  :root{
+    --ink:#1f2328; --muted:#57606a; --bg:#fafbfc; --panel:#ffffff;
+    --line:#d0d7de; --tp:#0969da; --pcp:#7c3aed; --dcp:#1f883d;
+    --warm:#bf8700; --red:#cf222e;
+  }
+  body{
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    max-width:1240px; margin:24px auto; padding:0 24px;
+    color:var(--ink); background:var(--bg); line-height:1.7;
+  }
+  h1{ border-bottom:3px solid var(--tp); padding-bottom:8px; }
+  h2{ border-left:5px solid var(--tp); padding-left:12px; margin-top:48px; color:#0a3069; }
+  h3{ color:#0550ae; margin-top:32px; }
+  h4{ color:#24292f; margin-top:22px; }
+  code,pre{ font-family:"JetBrains Mono","Fira Code",Consolas,monospace; }
+  code{ background:#eef1f4; padding:2px 6px; border-radius:4px; font-size:.92em; color:#b91c1c; }
+  pre{ background:#0d1117; color:#e6edf3; padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:13px; line-height:1.55; }
+  pre .cm{ color:#8b949e; font-style:italic; }
+  pre .kw{ color:#ff7b72; }
+  pre .fn{ color:#d2a8ff; }
+  pre .str{ color:#a5d6ff; }
+  pre .num{ color:#79c0ff; }
+  pre .ty{ color:#ffa657; }
+
+  .note{ background:#fff8c5; border-left:4px solid #d4a72c; padding:10px 14px; margin:14px 0; border-radius:4px; }
+  .tip { background:#ddf4ff; border-left:4px solid var(--tp);  padding:10px 14px; margin:14px 0; border-radius:4px; }
+  .danger{ background:#ffebe9; border-left:4px solid var(--red); padding:10px 14px; margin:14px 0; border-radius:4px; }
+
+  .file-ref{ font-size:.84em; color:var(--muted); margin:4px 0 10px; }
+  .file-ref a{ color:var(--tp); text-decoration:none; }
+
+  table{ width:100%; border-collapse:collapse; margin:14px 0; font-size:13.5px; }
+  th,td{ border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top; }
+  th{ background:#f6f8fa; font-weight:600; }
+
+  .twocol{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .threecol{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+  @media (max-width:980px){ .twocol,.threecol{ grid-template-columns:1fr; } }
+
+  /* ----- legends & swatches ----- */
+  .legend{ display:flex; gap:18px; flex-wrap:wrap; margin:8px 0 16px; font-size:13px; align-items:center; }
+  .sw{ display:inline-block; width:14px; height:14px; border-radius:3px; vertical-align:middle; margin-right:6px; border:1px solid rgba(0,0,0,0.1); }
+
+  /* ----- Rank grid (PCP × TP) ----- */
+  .rank-grid{ display:inline-grid; gap:6px; margin:8px 12px 8px 0; background:#f6f8fa; padding:10px 12px; border:1px solid var(--line); border-radius:8px; }
+  .rank-cell{ width:64px; height:50px; border-radius:6px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-size:12px; color:#fff; font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,0.12); }
+  .rank-cell small{ font-size:10px; opacity:.92; font-weight:400; }
+  .rank-cell.r0{ background:#0969da; } .rank-cell.r1{ background:#218bff; }
+  .rank-cell.r2{ background:#1f883d; } .rank-cell.r3{ background:#2ea043; }
+  .rank-cell.r4{ background:#bf8700; } .rank-cell.r5{ background:#d4a72c; }
+  .rank-cell.r6{ background:#8250df; } .rank-cell.r7{ background:#a371f7; }
+  .rank-axis-x, .rank-axis-y{ font-size:11px; color:var(--muted); text-align:center; }
+
+  /* ----- group highlight rings ----- */
+  .grp-tp { outline:3px solid rgba(9,105,218,0.85);    outline-offset:2px; border-radius:8px; }
+  .grp-pcp{ outline:3px dashed rgba(124,58,237,0.85);  outline-offset:6px; border-radius:10px; }
+  .grp-dcp{ outline:3px dotted rgba(31,136,61,0.95);   outline-offset:10px; border-radius:12px; }
+
+  /* ----- token chips ----- */
+  .chips{ display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:4px 0; }
+  .chip{ display:inline-flex; align-items:center; justify-content:center; min-width:34px; height:26px; padding:0 6px; font-size:11px; font-family:Consolas,monospace; border-radius:4px; border:1px solid #9cbcf7; background:#eef5ff; color:#1d4ed8; }
+  .chip.p1{ border-color:#b8a5f2; background:#ede9fe; color:#5b42a8; }
+  .chip.p2{ border-color:#86d9b7; background:#dcfce7; color:#0a6b3b; }
+  .chip.pad{ background:#e5e7eb; border-color:#cbd5e1; color:#64748b; }
+  .chip.sep{ background:#fff; border:1px dashed #94a3b8; color:#475569; min-width:14px; padding:0 4px; }
+  .chip.h{ background:#cfe0ff; border-color:#7aa7ff; color:#1d4ed8; font-weight:700; }
+  .chip.t{ background:#fde6cd; border-color:#fb923c; color:#9a3412; font-weight:700; }
+
+  /* ----- tensor box ----- */
+  .shape-box{
+    display:inline-block; border:1.5px solid var(--tp); background:#f0f7ff;
+    color:#0a3069; padding:6px 10px; border-radius:6px; font-family:Consolas,monospace;
+    font-size:12.5px; margin:4px 4px;
+  }
+  .shape-box.dcp{ border-color:var(--dcp); background:#eaf7ee; color:#0a6b3b; }
+  .shape-box.pcp{ border-color:var(--pcp); background:#f3edff; color:#4c1d95; }
+  .shape-box.kv { border-color:#bf8700; background:#fff8c5; color:#7a4a00; }
+
+  .flow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:12px 0; }
+  .flow .arrow{ color:var(--muted); font-size:22px; font-weight:700; }
+  .flow .op{ background:#fff; border:1.5px solid #94a3b8; border-radius:6px; padding:6px 10px; font-size:12.5px; color:#334155; }
+  .flow .op.coll{ background:#fef3c7; border-color:#d4a72c; color:#7a4a00; font-weight:600; }
+
+  /* ----- KV strip (token positions) ----- */
+  .kv-strip{ display:flex; gap:2px; margin:6px 0 4px; }
+  .kv-pos{ width:30px; height:30px; display:flex; align-items:center; justify-content:center; font-size:11px; font-family:Consolas,monospace; color:#fff; border-radius:3px; }
+  .pos-r0{ background:#0969da; } .pos-r1{ background:#218bff; }
+  .pos-r2{ background:#1f883d; } .pos-r3{ background:#2ea043; }
+  .pos-empty{ background:#e5e7eb; color:#64748b !important; }
+  .kv-row-label{ font-size:12px; color:var(--muted); font-family:Consolas,monospace; margin-right:8px; min-width:160px; display:inline-block; }
+  .kv-row{ display:flex; align-items:center; margin:4px 0; }
+
+  /* ----- step block ----- */
+  .step{
+    border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:12px 0;
+    background:#fff;
+  }
+  .step h4{ margin:0 0 6px; color:#0550ae; }
+  .step .sub{ color:var(--muted); font-size:12.5px; margin-bottom:8px; }
+
+  /* ----- TOC ----- */
+  .toc{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 18px; }
+  .toc ol{ margin:6px 0; }
+  .toc a{ color:var(--tp); text-decoration:none; }
+
+  .tag{ display:inline-block; font-size:11px; padding:2px 8px; border-radius:10px; color:#fff; margin-left:6px; }
+  .tag.tp{ background:var(--tp); } .tag.pcp{ background:var(--pcp); } .tag.dcp{ background:var(--dcp); }
+  .tag.code{ background:#334155; }
+
+  .footer-note{ font-size:12.5px; color:var(--muted); border-top:1px dashed var(--line); padding-top:14px; margin-top:48px; }
+
+  svg.diagram{ display:block; margin:6px auto 10px; max-width:100%; background:#fff; border:1px solid var(--line); border-radius:8px; }
+</style>
+<link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+
+<h1>vLLM Context Parallel：PCP 与 DCP 究竟怎么切？</h1>
+
+<p>本文围绕 <code>CP-Viz</code> 里的图，把 <strong>PCP（Prefill Context Parallel）</strong> 与 <strong>DCP（Decode Context Parallel）</strong> 在 vLLM 里到底是<em>怎么对张量切的</em>、<em>每一步通信前后的 shape 是什么</em>、以及 <em>KV cache 在每个 rank 上长什么样</em>讲清楚。所有 shape 都尽量标到了 attention head 维度上。</p>
+
+<div class="tip">
+<strong>TL;DR</strong>
+<ul>
+<li><strong>PCP</strong>：prefill 时把<em>序列维度</em>切到多个 rank 上算，每个 rank 只算 <code>S/pcp</code> 个 query 的 attention（采用 DualChunkSwap 让因果掩码下负载平衡），主要目标是<em>降低 TTFT</em>。</li>
+<li><strong>DCP</strong>：在<em>已有 TP 切头</em>的基础上，把同一头的 <strong>KV cache 沿 token 维度切到 dcp_size 个 rank 上</strong>，每张卡只存 <code>1/dcp</code> 的 KV，主要目标是<em>把单卡 KV 扩到 1M+ token、提升吞吐与 TPOT</em>。</li>
+<li>两者正交：<strong>PCP × DCP</strong> 既不重复物理 GPU，也不互相挤占头维，可以叠加使用。</li>
+</ul>
+</div>
+
+<div class="toc">
+<strong>目录</strong>
+<ol>
+  <li><a href="#bg">背景：从 TP 到 CP，到底为什么要切序列</a></li>
+  <li><a href="#layout">Rank 布局与三个通信组（TP / PCP / DCP）</a></li>
+  <li><a href="#basics">铺垫：rank、AllGather / ReduceScatter / AllReduce、TP 切线性层</a></li>
+  <li><a href="#dcp">DCP 详解：KV cache 怎么切，attention 怎么拼</a>
+    <ol>
+      <li><a href="#dcp-kv">KV cache 的 interleave 布局（细到每个 token 落在哪个 rank）</a></li>
+      <li><a href="#dcp-decode">Decode 时一层 attention 的完整通信流程（含 shape）</a></li>
+      <li><a href="#dcp-prefill">Chunked Prefill + DCP：context 与 query 两次 FA 的合并</a></li>
+      <li><a href="#dcp-pd">PD 分离时 prefill rank ↔ decode rank 的配对</a></li>
+    </ol>
+  </li>
+  <li><a href="#pcp">PCP 详解：DualChunkSwap 是怎么切的</a>
+    <ol>
+      <li><a href="#pcp-split">序列切分：2 × pcp 个 chunk 的 head/tail 交错</a></li>
+      <li><a href="#pcp-pos">PCPManager 输出了哪些 index（结合代码看）</a></li>
+      <li><a href="#pcp-prefill">PCP Prefill 的 ring 通信与 head/tail attention 拆分</a></li>
+      <li><a href="#pcp-decode">PCP Decode：query allgather + KV 复用</a></li>
+    </ol>
+  </li>
+  <li><a href="#combo">PCP × DCP 叠加在一起是什么样</a></li>
+  <li><a href="#opt">优化方向：TPA & 动态 CP</a></li>
+  <li><a href="#deploy">部署经验数据（来自分享 slides）</a></li>
+</ol>
+</div>
+
+<!-- ========================================================== -->
+<h2 id="bg">1. 背景：从 TP 到 CP，到底为什么要切序列</h2>
+
+<p>先回忆一下 vLLM 已有的并行维度，attention 这一层会有三种切分方式同时存在：</p>
+
+<table>
+<thead><tr><th>维度</th><th>沿什么轴切</th><th>每个 rank 上 attention 实际算什么</th><th>解决什么</th></tr></thead>
+<tbody>
+<tr><td><strong>TP</strong> <span class="tag tp">tensor parallel</span></td><td>head 数 <code>H</code></td><td>本卡 <code>H/tp</code> 个 head，全部 token，全部上下文</td><td>切权重 + 切激活的 head 维，省显存与算力</td></tr>
+<tr><td><strong>PCP</strong> <span class="tag pcp">prefill CP</span></td><td>prefill 的 query token 数 <code>S</code></td><td>本卡 <code>S/pcp</code> 个 query，仍是 <code>H/tp</code> 个 head；KV 通过 ring/allgather 在 pcp 内流转</td><td>把超长 prompt 的 TTFT 拉低</td></tr>
+<tr><td><strong>DCP</strong> <span class="tag dcp">decode CP</span></td><td>KV cache 的 token 维 <code>N</code></td><td>本卡持有 <code>N/dcp</code> 个 token 的 KV，对 query 做局部 attention，再跨 rank 合并 LSE</td><td>把单 TP 组的 KV 容量扩 dcp 倍；长序列 decode 时分摊 attention 计算</td></tr>
+</tbody>
+</table>
+
+<p>所以从张量切分上看：</p>
+
+<div class="legend">
+  <span><span class="sw" style="background:#0969da"></span>TP 切 head 维</span>
+  <span><span class="sw" style="background:#7c3aed"></span>PCP 切 prefill query 维</span>
+  <span><span class="sw" style="background:#1f883d"></span>DCP 切 KV cache 的 token 维（在 TP 之内继续细分）</span>
+</div>
+
+<svg class="diagram" viewBox="0 0 1100 230" width="100%">
+  <!-- Title -->
+  <text x="40" y="22" font-size="13" fill="#334155">单层 attention 的 4D 张量 <tspan font-family="Consolas">[batch=1, S, H, D]</tspan> 是怎么被切的</text>
+
+  <!-- TP cuboid -->
+  <g transform="translate(60,40)">
+    <rect width="240" height="120" fill="#dbeafe" stroke="#0969da" stroke-width="1.5"/>
+    <text x="120" y="-8" font-size="12" text-anchor="middle" fill="#0a3069">TP：沿 H 切</text>
+    <line x1="80" y1="0" x2="80" y2="120" stroke="#0969da" stroke-dasharray="3,3"/>
+    <line x1="160" y1="0" x2="160" y2="120" stroke="#0969da" stroke-dasharray="3,3"/>
+    <text x="40"  y="68" font-size="11" text-anchor="middle">H/tp</text>
+    <text x="120" y="68" font-size="11" text-anchor="middle">H/tp</text>
+    <text x="200" y="68" font-size="11" text-anchor="middle">H/tp</text>
+    <text x="120" y="138" font-size="11" text-anchor="middle" fill="#475569">每个 TP rank 持有完整的 S 和 D，但只有 1/tp 的 head</text>
+  </g>
+
+  <!-- PCP cuboid -->
+  <g transform="translate(400,40)">
+    <rect width="240" height="120" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="120" y="-8" font-size="12" text-anchor="middle" fill="#4c1d95">PCP：沿 prefill S 切</text>
+    <line x1="0" y1="40" x2="240" y2="40" stroke="#7c3aed" stroke-dasharray="3,3"/>
+    <line x1="0" y1="80" x2="240" y2="80" stroke="#7c3aed" stroke-dasharray="3,3"/>
+    <text x="120" y="22" font-size="11" text-anchor="middle">S/pcp（DualChunkSwap）</text>
+    <text x="120" y="62" font-size="11" text-anchor="middle">S/pcp</text>
+    <text x="120" y="102" font-size="11" text-anchor="middle">S/pcp</text>
+    <text x="120" y="138" font-size="11" text-anchor="middle" fill="#475569">每个 PCP rank 只算自己那一段 query 的 attention</text>
+  </g>
+
+  <!-- DCP cuboid: split along seq for KV cache -->
+  <g transform="translate(740,40)">
+    <rect width="240" height="120" fill="#dcfce7" stroke="#1f883d" stroke-width="1.5"/>
+    <text x="120" y="-8" font-size="12" text-anchor="middle" fill="#0a6b3b">DCP：沿 KV 的 N 切</text>
+    <g fill="#1f883d" font-size="10">
+      <rect x="0"   y="0" width="30" height="120" fill="#bbf7d0"/>
+      <rect x="60"  y="0" width="30" height="120" fill="#bbf7d0"/>
+      <rect x="120" y="0" width="30" height="120" fill="#bbf7d0"/>
+      <rect x="180" y="0" width="30" height="120" fill="#bbf7d0"/>
+      <text x="15"  y="68" text-anchor="middle">r0</text>
+      <text x="75"  y="68" text-anchor="middle">r1</text>
+      <text x="135" y="68" text-anchor="middle">r2</text>
+      <text x="195" y="68" text-anchor="middle">r3</text>
+    </g>
+    <text x="120" y="138" font-size="11" text-anchor="middle" fill="#475569">KV[N] 按 (pos // I) % dcp 轮转分配</text>
+  </g>
+</svg>
+
+<p><strong>读这张图的关键</strong>：TP / PCP / DCP 切的是三个不同维度，所以它们在一台机器上是同时叠加的。下面我们就先看物理 rank 怎么排布，再分别看两种 CP 怎么切。</p>
+
+<!-- ========================================================== -->
+<h2 id="layout">2. Rank 布局与三个通信组</h2>
+
+<p>vLLM 把所有 worker rank 按 <code>(ep, dp, pp, pcp, tp)</code> 5 维数组排布，<strong>最里面变化最快的是 TP</strong>。从这块儿派生三个通信组：</p>
+
+<div class="file-ref">参考：<a>vllm/distributed/parallel_state.py</a> 中 <code>initialize_model_parallel</code> 的 <code>all_ranks.reshape(...)</code></div>
+
+<pre><span class="cm"># 简化（忽略 ep/dp/pp=1）</span>
+all_ranks = torch.arange(world).reshape(1, 1, 1, pcp_size, tp_size)
+
+<span class="cm"># TP group：最里面那一维</span>
+tp_groups  = all_ranks.view(-1, tp_size).unbind(0)
+
+<span class="cm"># DCP group：dcp_size 必须整除 tp_size，DCP 把 tp 组再切几份</span>
+dcp_groups = all_ranks.reshape(-1, dcp_size).unbind(0)
+
+<span class="cm"># PCP group：先把 pcp/tp 转置，再按 pcp_size 划组 → 同一 tp 位置在不同 pcp slice 上的 rank 组成一组</span>
+pcp_groups = all_ranks.transpose(3, 4).reshape(-1, pcp_size).unbind(0)
+</pre>
+
+<p>取一个具体的例子直观体会一下：<strong>PCP = 2，TP = 4</strong>（共 8 个 rank）。</p>
+
+<div class="threecol">
+  <!-- TP groups -->
+  <div>
+    <h4>TP groups <span class="tag tp">2 组</span></h4>
+    <div class="rank-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="rank-cell r0 grp-tp">0<small>tp=0</small></div>
+      <div class="rank-cell r1 grp-tp">1<small>tp=1</small></div>
+      <div class="rank-cell r2 grp-tp">2<small>tp=2</small></div>
+      <div class="rank-cell r3 grp-tp">3<small>tp=3</small></div>
+      <div class="rank-cell r4 grp-tp">4<small>tp=0</small></div>
+      <div class="rank-cell r5 grp-tp">5<small>tp=1</small></div>
+      <div class="rank-cell r6 grp-tp">6<small>tp=2</small></div>
+      <div class="rank-cell r7 grp-tp">7<small>tp=3</small></div>
+    </div>
+    <code>[0,1,2,3]</code>、<code>[4,5,6,7]</code><br>
+    <small>同一 PCP slice 内的 4 张卡组成一个 TP 组</small>
+  </div>
+
+  <!-- PCP groups -->
+  <div>
+    <h4>PCP groups <span class="tag pcp">4 组</span></h4>
+    <div class="rank-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="rank-cell r0 grp-pcp">0</div>
+      <div class="rank-cell r1 grp-pcp">1</div>
+      <div class="rank-cell r2 grp-pcp">2</div>
+      <div class="rank-cell r3 grp-pcp">3</div>
+      <div class="rank-cell r4 grp-pcp">4</div>
+      <div class="rank-cell r5 grp-pcp">5</div>
+      <div class="rank-cell r6 grp-pcp">6</div>
+      <div class="rank-cell r7 grp-pcp">7</div>
+    </div>
+    <code>[0,4]</code>、<code>[1,5]</code>、<code>[2,6]</code>、<code>[3,7]</code><br>
+    <small>同一 tp_rank 在不同 PCP slice 上配对</small>
+  </div>
+
+  <!-- DCP groups, when dcp=tp=4 -->
+  <div>
+    <h4>DCP groups（取 dcp=4）<span class="tag dcp">2 组</span></h4>
+    <div class="rank-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="rank-cell r0 grp-dcp">0</div>
+      <div class="rank-cell r1 grp-dcp">1</div>
+      <div class="rank-cell r2 grp-dcp">2</div>
+      <div class="rank-cell r3 grp-dcp">3</div>
+      <div class="rank-cell r4 grp-dcp">4</div>
+      <div class="rank-cell r5 grp-dcp">5</div>
+      <div class="rank-cell r6 grp-dcp">6</div>
+      <div class="rank-cell r7 grp-dcp">7</div>
+    </div>
+    <code>[0,1,2,3]</code>、<code>[4,5,6,7]</code><br>
+    <small>当 <code>dcp_size == tp_size</code> 时 DCP 组 = TP 组</small>
+  </div>
+</div>
+
+<div class="note">
+<strong>为什么 DCP 必须满足 <code>dcp_size | tp_size</code>？</strong>
+DCP 不申请新的 GPU，它<em>复用</em> TP 组里现成的 rank：把原来同一个 TP 组里 <code>tp_size</code> 张卡，再细分成 <code>tp_size / dcp_size</code> 个小子组。每个小子组内的 rank 持有相同的 head 切片，但各自存一段不重叠的 KV 序列。这就是为什么我们经常说「DCP 是从 TP 里偷出来的」。
+</div>
+
+<p>再列三个常见配置，方便对照后面：</p>
+
+<table>
+<thead><tr><th>配置</th><th>TP group</th><th>DCP group</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>PCP=1, TP=4, DCP=4</td><td><code>[0,1,2,3]</code></td><td><code>[0,1,2,3]</code></td><td>DCP=TP，最常见的「DCP 直接接管 TP 切的 KV」</td></tr>
+<tr><td>PCP=1, TP=4, DCP=2</td><td><code>[0,1,2,3]</code></td><td><code>[0,1]</code>、<code>[2,3]</code></td><td>TP 组里有两个 DCP 子组，每个子组里仅 2 张卡共享同一段 KV 序列</td></tr>
+<tr><td>PCP=2, TP=4, DCP=4</td><td><code>[0..3]</code>、<code>[4..7]</code></td><td><code>[0..3]</code>、<code>[4..7]</code></td><td>每个 PCP slice 内部一个独立的 DCP=TP 组</td></tr>
+</tbody>
+</table>
+
+<!-- ========================================================== -->
+<h2 id="basics">2.5 在继续往下读之前的一些铺垫</h2>
+
+<p>下一章会反复出现「rank」「AllGather」「column-parallel linear」这些词。如果你之前没接触过多卡训练/推理，下面这几张图先看一眼，再往下读会顺畅很多。</p>
+
+<h3 id="basics-collective">2.5.1 rank、world 和三个集合通信原语</h3>
+
+<p>一台机器上插了好几张 GPU。每张 GPU 在 vLLM 里叫一个 <strong>rank</strong>（编号 0、1、2 …），所有 rank 加起来叫一个 <strong>world</strong>。</p>
+
+<p>关键事实是：<strong>不同 rank 的 GPU 显存是相互不可见的</strong>。rank 0 想看到 rank 1 上的一个张量，必须显式发起一次「集合通信」，让数据在 GPU 之间用 NVLink/网络真实地搬一次。</p>
+
+<p>下面三个集合通信原语，是后面所有 DCP/TP 通信的基础。<strong>请你把这三张图记住</strong>，后文出现 <code>AllGather</code>、<code>ReduceScatter</code>、<code>AllReduce</code> 时直接对应回来：</p>
+
+<svg class="diagram" viewBox="0 0 1180 460" width="100%">
+  <!-- AllGather -->
+  <g transform="translate(20,30)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#0a3069">① AllGather：每张卡各拿一块，凑成完整的拼图</text>
+    <text x="0" y="18" font-size="11" fill="#475569">「我有 a₀，你有 a₁，他有 a₂，她有 a₃ → 做完之后，每个人都拥有 [a₀, a₁, a₂, a₃]」</text>
+
+    <!-- before -->
+    <g transform="translate(0,38)" font-family="Consolas" font-size="11">
+      <text x="0" y="-2" font-size="11" fill="#475569">通信前（每卡一块）</text>
+      <g transform="translate(0,8)"><rect width="64" height="28" fill="#dbeafe" stroke="#0969da"/><text x="32" y="19" text-anchor="middle">a₀</text></g>
+      <g transform="translate(80,8)"><rect width="64" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="32" y="19" text-anchor="middle">a₁</text></g>
+      <g transform="translate(160,8)"><rect width="64" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="32" y="19" text-anchor="middle">a₂</text></g>
+      <g transform="translate(240,8)"><rect width="64" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="32" y="19" text-anchor="middle">a₃</text></g>
+      <text x="0" y="56" font-size="10" fill="#64748b">rank 0    rank 1    rank 2    rank 3</text>
+    </g>
+
+    <text x="340" y="60" font-size="22" fill="#0a3069">→</text>
+
+    <!-- after -->
+    <g transform="translate(370,38)" font-family="Consolas" font-size="11">
+      <text x="0" y="-2" font-size="11" fill="#475569">通信后（每卡都拿到完整拼图）</text>
+      <g transform="translate(0,8)">
+        <g><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">a₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">a₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">a₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">a₃</text></g>
+      </g>
+      <g transform="translate(150,8)">
+        <g><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">a₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">a₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">a₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">a₃</text></g>
+      </g>
+      <g transform="translate(300,8)">
+        <g><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">a₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">a₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">a₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">a₃</text></g>
+      </g>
+      <g transform="translate(450,8)">
+        <g><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">a₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">a₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">a₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">a₃</text></g>
+      </g>
+      <text x="0" y="56" font-size="10" fill="#64748b">rank 0          rank 1          rank 2          rank 3</text>
+    </g>
+  </g>
+
+  <!-- divider -->
+  <line x1="20" y1="180" x2="1160" y2="180" stroke="#e2e8f0"/>
+
+  <!-- ReduceScatter -->
+  <g transform="translate(20,200)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#0a6b3b">② ReduceScatter：先逐位置相加，再每人只拿走自己那段</text>
+    <text x="0" y="18" font-size="11" fill="#475569">「每个人都有完整 4 段 [c₀,c₁,c₂,c₃]，先把 4 张卡对应段加起来，然后 rank i 只留下第 i 段」</text>
+
+    <!-- before -->
+    <g transform="translate(0,38)" font-family="Consolas" font-size="11">
+      <text x="0" y="-2" font-size="11" fill="#475569">通信前（每卡都有完整 4 段，但内容不同）</text>
+      <g transform="translate(0,8)">
+        <g><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">x₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">x₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">x₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#dbeafe" stroke="#0969da"/><text x="16" y="19" text-anchor="middle">x₃</text></g>
+      </g>
+      <g transform="translate(150,8)">
+        <g><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">y₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">y₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">y₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="16" y="19" text-anchor="middle">y₃</text></g>
+      </g>
+      <g transform="translate(300,8)">
+        <g><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">z₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">z₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">z₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="16" y="19" text-anchor="middle">z₃</text></g>
+      </g>
+      <g transform="translate(450,8)">
+        <g><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">w₀</text></g>
+        <g transform="translate(32,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">w₁</text></g>
+        <g transform="translate(64,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">w₂</text></g>
+        <g transform="translate(96,0)"><rect width="32" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="16" y="19" text-anchor="middle">w₃</text></g>
+      </g>
+      <text x="0" y="56" font-size="10" fill="#64748b">rank 0           rank 1           rank 2           rank 3</text>
+    </g>
+
+    <text x="610" y="60" font-size="22" fill="#0a6b3b">→</text>
+
+    <!-- after -->
+    <g transform="translate(640,38)" font-family="Consolas" font-size="10">
+      <text x="0" y="-2" font-size="11" fill="#475569">通信后（每卡只剩自己那一段，但是是 4 张卡对应段的和）</text>
+      <g transform="translate(0,8)"><rect width="80" height="28" fill="#dbeafe" stroke="#0969da"/><text x="40" y="19" text-anchor="middle">x₀+y₀+z₀+w₀</text></g>
+      <g transform="translate(100,8)"><rect width="80" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="40" y="19" text-anchor="middle">x₁+y₁+z₁+w₁</text></g>
+      <g transform="translate(200,8)"><rect width="80" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="40" y="19" text-anchor="middle">x₂+y₂+z₂+w₂</text></g>
+      <g transform="translate(300,8)"><rect width="80" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="40" y="19" text-anchor="middle">x₃+y₃+z₃+w₃</text></g>
+      <text x="0" y="56" font-size="10" fill="#64748b">rank 0     rank 1     rank 2     rank 3</text>
+    </g>
+  </g>
+
+  <line x1="20" y1="340" x2="1160" y2="340" stroke="#e2e8f0"/>
+
+  <!-- AllReduce -->
+  <g transform="translate(20,360)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#7c3aed">③ AllReduce：所有卡的张量逐位置相加，每张卡都拿一份完整结果</text>
+    <text x="0" y="18" font-size="11" fill="#475569">「= ReduceScatter + AllGather」。最常见的用法就是 row-parallel linear 之后把各卡的部分和加起来。</text>
+
+    <!-- before -->
+    <g transform="translate(0,38)" font-family="Consolas" font-size="11">
+      <g><rect width="64" height="28" fill="#dbeafe" stroke="#0969da"/><text x="32" y="19" text-anchor="middle">x</text></g>
+      <g transform="translate(80,0)"><rect width="64" height="28" fill="#dcfce7" stroke="#1f883d"/><text x="32" y="19" text-anchor="middle">y</text></g>
+      <g transform="translate(160,0)"><rect width="64" height="28" fill="#fef3c7" stroke="#bf8700"/><text x="32" y="19" text-anchor="middle">z</text></g>
+      <g transform="translate(240,0)"><rect width="64" height="28" fill="#ede9fe" stroke="#7c3aed"/><text x="32" y="19" text-anchor="middle">w</text></g>
+      <text x="0" y="46" font-size="10" fill="#64748b">rank 0    rank 1    rank 2    rank 3</text>
+    </g>
+
+    <text x="340" y="50" font-size="22" fill="#7c3aed">→</text>
+
+    <g transform="translate(370,38)" font-family="Consolas" font-size="11">
+      <g><rect width="80" height="28" fill="#f3e8ff" stroke="#7c3aed"/><text x="40" y="19" text-anchor="middle">x+y+z+w</text></g>
+      <g transform="translate(100,0)"><rect width="80" height="28" fill="#f3e8ff" stroke="#7c3aed"/><text x="40" y="19" text-anchor="middle">x+y+z+w</text></g>
+      <g transform="translate(200,0)"><rect width="80" height="28" fill="#f3e8ff" stroke="#7c3aed"/><text x="40" y="19" text-anchor="middle">x+y+z+w</text></g>
+      <g transform="translate(300,0)"><rect width="80" height="28" fill="#f3e8ff" stroke="#7c3aed"/><text x="40" y="19" text-anchor="middle">x+y+z+w</text></g>
+      <text x="0" y="46" font-size="10" fill="#64748b">rank 0    rank 1    rank 2    rank 3</text>
+    </g>
+  </g>
+</svg>
+
+<div class="tip">
+<strong>三句话总结</strong>：
+<ul>
+<li><strong>AllGather</strong>：拼图。每人一块小拼图，集体之后每人都拿到完整大图。<em>张量变大</em>（每卡 size × N）。</li>
+<li><strong>ReduceScatter</strong>：先逐位置加，再每人只拿走自己负责的那一段。<em>张量变小</em>（每卡 size ÷ N），但里面是「sum」。</li>
+<li><strong>AllReduce</strong>：所有卡的整张张量相加，加完之后每人各持一份完整结果。<em>张量大小不变</em>，但里面是「sum」。</li>
+</ul>
+</div>
+
+<h3 id="basics-tp-linear">2.5.2 TP 是怎么切 attention 这层线性的</h3>
+
+<p>attention 一层里有两类线性变换：</p>
+<ul>
+<li><code>q_proj</code> / <code>k_proj</code> / <code>v_proj</code>：把 <code>hidden_states (B, hidden)</code> 投影出 query / key / value，每个的输出形状是 <code>(B, H × D)</code>，<code>H</code> 是 head 数，<code>D</code> 是 head_size。</li>
+<li><code>o_proj</code>：把 attention 输出 <code>(B, H × D)</code> 投回 <code>(B, hidden)</code>。</li>
+</ul>
+
+<p>TP=4 时，模型把这两个线性的权重矩阵切到 4 张卡上，但<strong>切的方向相反</strong>：</p>
+
+<svg class="diagram" viewBox="0 0 1180 360" width="100%">
+  <!-- Column-parallel q_proj -->
+  <g transform="translate(20,30)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#0a3069">Column-parallel：把 q_proj 的权重「沿输出维度」切（按 head 切）</text>
+    <text x="0" y="18" font-size="11" fill="#475569">每张卡持有 W_q 的一段列；输入 hidden 在所有卡上是相同的（同一份）；输出每张卡只拿到 H/4 个 head。</text>
+
+    <!-- input -->
+    <g transform="translate(0,38)">
+      <rect width="100" height="50" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="50" y="22" text-anchor="middle" font-size="11" font-family="Consolas">hidden</text>
+      <text x="50" y="38" text-anchor="middle" font-size="10" fill="#475569">(B, hidden)</text>
+      <text x="50" y="68" text-anchor="middle" font-size="10" fill="#64748b">所有卡都是同一份</text>
+    </g>
+
+    <text x="120" y="70" font-size="20" fill="#475569">×</text>
+
+    <!-- W_q split column-wise -->
+    <g transform="translate(150,38)">
+      <rect width="50" height="50" fill="#dbeafe" stroke="#0969da"/>
+      <text x="25" y="30" text-anchor="middle" font-size="11">W_q⁰</text>
+      <g transform="translate(60,0)"><rect width="50" height="50" fill="#dcfce7" stroke="#1f883d"/><text x="25" y="30" text-anchor="middle" font-size="11">W_q¹</text></g>
+      <g transform="translate(120,0)"><rect width="50" height="50" fill="#fef3c7" stroke="#bf8700"/><text x="25" y="30" text-anchor="middle" font-size="11">W_q²</text></g>
+      <g transform="translate(180,0)"><rect width="50" height="50" fill="#ede9fe" stroke="#7c3aed"/><text x="25" y="30" text-anchor="middle" font-size="11">W_q³</text></g>
+      <text x="115" y="74" text-anchor="middle" font-size="10" fill="#64748b">W_q shape = (hidden, H·D)，按"列"切 4 份</text>
+    </g>
+
+    <text x="400" y="70" font-size="20" fill="#475569">=</text>
+
+    <!-- output Q split -->
+    <g transform="translate(420,38)">
+      <rect width="60" height="50" fill="#dbeafe" stroke="#0969da"/>
+      <text x="30" y="22" text-anchor="middle" font-size="11">Q⁰</text>
+      <text x="30" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, H/4, D)</text>
+      <g transform="translate(70,0)"><rect width="60" height="50" fill="#dcfce7" stroke="#1f883d"/><text x="30" y="22" text-anchor="middle" font-size="11">Q¹</text><text x="30" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, H/4, D)</text></g>
+      <g transform="translate(140,0)"><rect width="60" height="50" fill="#fef3c7" stroke="#bf8700"/><text x="30" y="22" text-anchor="middle" font-size="11">Q²</text><text x="30" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, H/4, D)</text></g>
+      <g transform="translate(210,0)"><rect width="60" height="50" fill="#ede9fe" stroke="#7c3aed"/><text x="30" y="22" text-anchor="middle" font-size="11">Q³</text><text x="30" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, H/4, D)</text></g>
+      <text x="135" y="74" text-anchor="middle" font-size="10" fill="#64748b">每张卡只拿到自己那 H/4 个 head 的 Q</text>
+    </g>
+
+    <text x="720" y="70" font-size="11" fill="#0a6b3b">需要通信吗？</text>
+    <text x="720" y="86" font-size="11" fill="#0a6b3b" font-weight="700">不需要 ✅ 输入本来就是一样的，分别算自己那一段。</text>
+  </g>
+
+  <!-- Row-parallel o_proj -->
+  <g transform="translate(20,200)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#9a3412">Row-parallel：把 o_proj 的权重「沿输入维度」切</text>
+    <text x="0" y="18" font-size="11" fill="#475569">每张卡持有 W_o 的一段行；输入 attention 输出每张卡是自己那 H/4 段 head；各卡的输出是「部分和」，最后必须 AllReduce。</text>
+
+    <!-- input split -->
+    <g transform="translate(0,38)">
+      <rect width="50" height="50" fill="#dbeafe" stroke="#0969da"/>
+      <text x="25" y="22" text-anchor="middle" font-size="11">attn⁰</text>
+      <text x="25" y="38" text-anchor="middle" font-size="9" fill="#475569">H/4</text>
+      <g transform="translate(60,0)"><rect width="50" height="50" fill="#dcfce7" stroke="#1f883d"/><text x="25" y="22" text-anchor="middle" font-size="11">attn¹</text><text x="25" y="38" text-anchor="middle" font-size="9" fill="#475569">H/4</text></g>
+      <g transform="translate(120,0)"><rect width="50" height="50" fill="#fef3c7" stroke="#bf8700"/><text x="25" y="22" text-anchor="middle" font-size="11">attn²</text><text x="25" y="38" text-anchor="middle" font-size="9" fill="#475569">H/4</text></g>
+      <g transform="translate(180,0)"><rect width="50" height="50" fill="#ede9fe" stroke="#7c3aed"/><text x="25" y="22" text-anchor="middle" font-size="11">attn³</text><text x="25" y="38" text-anchor="middle" font-size="9" fill="#475569">H/4</text></g>
+    </g>
+
+    <text x="250" y="70" font-size="20" fill="#475569">×</text>
+
+    <g transform="translate(280,38)">
+      <rect width="50" height="50" fill="#dbeafe" stroke="#0969da"/>
+      <text x="25" y="30" text-anchor="middle" font-size="11">W_o⁰</text>
+      <g transform="translate(60,0)"><rect width="50" height="50" fill="#dcfce7" stroke="#1f883d"/><text x="25" y="30" text-anchor="middle" font-size="11">W_o¹</text></g>
+      <g transform="translate(120,0)"><rect width="50" height="50" fill="#fef3c7" stroke="#bf8700"/><text x="25" y="30" text-anchor="middle" font-size="11">W_o²</text></g>
+      <g transform="translate(180,0)"><rect width="50" height="50" fill="#ede9fe" stroke="#7c3aed"/><text x="25" y="30" text-anchor="middle" font-size="11">W_o³</text></g>
+      <text x="115" y="74" text-anchor="middle" font-size="10" fill="#64748b">W_o shape = (H·D, hidden)，按"行"切 4 份</text>
+    </g>
+
+    <text x="530" y="70" font-size="20" fill="#475569">=</text>
+
+    <g transform="translate(560,38)">
+      <rect width="80" height="50" fill="#fff" stroke="#94a3b8" stroke-dasharray="3,3"/>
+      <text x="40" y="22" text-anchor="middle" font-size="11">partial⁰</text>
+      <text x="40" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, hidden)</text>
+      <g transform="translate(90,0)"><rect width="80" height="50" fill="#fff" stroke="#94a3b8" stroke-dasharray="3,3"/><text x="40" y="22" text-anchor="middle" font-size="11">partial¹</text><text x="40" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, hidden)</text></g>
+      <g transform="translate(180,0)"><rect width="80" height="50" fill="#fff" stroke="#94a3b8" stroke-dasharray="3,3"/><text x="40" y="22" text-anchor="middle" font-size="11">partial²</text><text x="40" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, hidden)</text></g>
+      <g transform="translate(270,0)"><rect width="80" height="50" fill="#fff" stroke="#94a3b8" stroke-dasharray="3,3"/><text x="40" y="22" text-anchor="middle" font-size="11">partial³</text><text x="40" y="38" text-anchor="middle" font-size="9" fill="#475569">(B, hidden)</text></g>
+      <text x="180" y="74" text-anchor="middle" font-size="10" fill="#9a3412">每张卡上是同一形状的"部分和"，必须加起来才正确</text>
+    </g>
+
+    <g transform="translate(560,108)">
+      <text x="0" y="0" font-size="11" fill="#7c3aed">↓ AllReduce</text>
+    </g>
+    <g transform="translate(560,118)">
+      <rect width="350" height="36" fill="#f3e8ff" stroke="#7c3aed"/>
+      <text x="175" y="22" text-anchor="middle" font-size="11">每张卡都得到 partial⁰ + partial¹ + partial² + partial³ = 完整 hidden_out</text>
+    </g>
+  </g>
+</svg>
+
+<div class="tip">
+<strong>核心观察</strong>：column-parallel 的 q_proj 配上 row-parallel 的 o_proj 是一对默契组合。<strong>中间的 attention 计算只要每张卡能用自己那 H/4 个 head 算出 attention 输出就够了</strong>，不需要任何额外通信。<br><br>
+DCP 改变的就是这个假设：DCP 把 KV 沿 token 维进一步切了，所以「attention 计算」这一步本卡的 KV 不再完整 → 必须新增几次通信来凑。
+</div>
+
+<!-- ========================================================== -->
+<h2 id="dcp">3. DCP 详解：KV cache 怎么切，attention 怎么拼</h2>
+
+<h3 id="dcp-kv">3.1 KV cache 的 interleave 布局</h3>
+
+<p>DCP 的核心数据结构变化就一句话：</p>
+
+<div class="tip">
+对绝对位置 <code>i</code> 的 token，它的 KV 被写到 <strong>rank <code>(i // I) % dcp_size</code></strong> 上，其中 <code>I = cp_kv_cache_interleave_size</code>。
+</div>
+
+<div class="file-ref">参考：<a>vllm/v1/worker/gpu/block_table.py:_compute_slot_mappings_kernel</a></div>
+
+<pre><span class="cm"># Triton kernel 真正在做的事，简化为 Python：</span>
+<span class="kw">for</span> pos <span class="kw">in</span> positions:
+    block_index   = pos // (block_size * cp_size)
+    block_offset  = pos %  (block_size * cp_size)
+    is_local      = (block_offset // CP_INTERLEAVE) % cp_size == cp_rank
+    rounds        = block_offset //  (CP_INTERLEAVE * cp_size)
+    remainder     = block_offset %    CP_INTERLEAVE
+    local_offset  = rounds * CP_INTERLEAVE + remainder
+    slot_id       = block_table[req][block_index] * block_size + local_offset
+    slot_mapping[pos] = slot_id <span class="kw">if</span> is_local <span class="kw">else</span> PAD_SLOT_ID
+</pre>
+
+<p>读起来比较绕，下面用两种常见的 <code>interleave_size</code> 直接画出来。设 <code>dcp_size=4</code>、<code>block_size=8</code>、序列长度 <code>N=32</code>。</p>
+
+<h4>① <code>cp_kv_cache_interleave_size = 1</code>（token 级 round-robin）</h4>
+<div class="legend">
+  <span><span class="sw" style="background:#0969da"></span>dcp rank 0</span>
+  <span><span class="sw" style="background:#218bff"></span>dcp rank 1</span>
+  <span><span class="sw" style="background:#1f883d"></span>dcp rank 2</span>
+  <span><span class="sw" style="background:#2ea043"></span>dcp rank 3</span>
+</div>
+
+<div class="kv-row">
+  <span class="kv-row-label">全局 token pos</span>
+  <div class="kv-strip">
+    <div class="kv-pos pos-r0">0</div><div class="kv-pos pos-r1">1</div><div class="kv-pos pos-r2">2</div><div class="kv-pos pos-r3">3</div>
+    <div class="kv-pos pos-r0">4</div><div class="kv-pos pos-r1">5</div><div class="kv-pos pos-r2">6</div><div class="kv-pos pos-r3">7</div>
+    <div class="kv-pos pos-r0">8</div><div class="kv-pos pos-r1">9</div><div class="kv-pos pos-r2">10</div><div class="kv-pos pos-r3">11</div>
+    <div class="kv-pos pos-r0">12</div><div class="kv-pos pos-r1">13</div><div class="kv-pos pos-r2">14</div><div class="kv-pos pos-r3">15</div>
+  </div>
+</div>
+<div class="kv-row">
+  <span class="kv-row-label">rank 0 上的本地 slot</span>
+  <div class="kv-strip">
+    <div class="kv-pos pos-r0">0</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div>
+    <div class="kv-pos pos-r0">1</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div>
+    <div class="kv-pos pos-r0">2</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div>
+    <div class="kv-pos pos-r0">3</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div>
+  </div>
+</div>
+
+<p style="color:var(--muted);font-size:13px;">⬆ 每 4 个连续 token 各自落在 1 张卡上；rank 0 实际在 KV cache 第 0 个 block 里塞了 token <code>0,4,8,12</code>，压缩到 4 个 slot（左边的位置紧密排列）。</p>
+
+<h4>② <code>cp_kv_cache_interleave_size = block_size = 8</code>（block 级）</h4>
+<div class="kv-row">
+  <span class="kv-row-label">全局 token pos</span>
+  <div class="kv-strip">
+    <div class="kv-pos pos-r0">0</div><div class="kv-pos pos-r0">1</div><div class="kv-pos pos-r0">2</div><div class="kv-pos pos-r0">3</div>
+    <div class="kv-pos pos-r0">4</div><div class="kv-pos pos-r0">5</div><div class="kv-pos pos-r0">6</div><div class="kv-pos pos-r0">7</div>
+    <div class="kv-pos pos-r1">8</div><div class="kv-pos pos-r1">9</div><div class="kv-pos pos-r1">10</div><div class="kv-pos pos-r1">11</div>
+    <div class="kv-pos pos-r1">12</div><div class="kv-pos pos-r1">13</div><div class="kv-pos pos-r1">14</div><div class="kv-pos pos-r1">15</div>
+  </div>
+</div>
+<div class="kv-row">
+  <span class="kv-row-label">rank 0 上的本地 block</span>
+  <div class="kv-strip">
+    <div class="kv-pos pos-r0">0</div><div class="kv-pos pos-r0">1</div><div class="kv-pos pos-r0">2</div><div class="kv-pos pos-r0">3</div>
+    <div class="kv-pos pos-r0">4</div><div class="kv-pos pos-r0">5</div><div class="kv-pos pos-r0">6</div><div class="kv-pos pos-r0">7</div>
+    <div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div>
+    <div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div><div class="kv-pos pos-empty">·</div>
+  </div>
+</div>
+
+<p style="color:var(--muted);font-size:13px;">⬆ 每张卡先吃满自己的整个 block，再下一个 block 才去别的卡。block 级布局对 prefix cache 命中更友好，但 decode 时 attention 的并行度略低。</p>
+
+<p>因此每个 rank 实际持有的 KV cache 张量形状是：</p>
+
+<div class="shape-box kv">kv_cache[layer][k or v]: <strong>(num_blocks, block_size, H_kv/tp_size, head_size)</strong></div>
+<p>其中 <code>num_blocks</code> 大约只需要原来非 DCP 时的 <code>1/dcp_size</code>，<strong>这是 DCP 能把可用 KV 容量扩到 dcp 倍的根本原因</strong>。<code>FullAttentionSpec.max_memory_usage_bytes</code> 里也直接把 <code>max_model_len /= dcp_size * pcp_size</code> 算容量。</p>
+
+<!-- ============== DCP DECODE ============== -->
+<h3 id="dcp-decode">3.2 Decode 时一层 attention 的完整通信流程</h3>
+
+<p>下面用最常见的 <strong>PCP=1, TP=4, DCP=4</strong> 走一遍。也就是说一共 4 张 GPU，TP 把 head 切成 4 份，DCP 把 KV cache 沿 token 维度也切成 4 份，<strong>DCP 组就是这 4 张卡本身</strong>。</p>
+
+<p>场景设定（具体数字，方便对照 shape）：</p>
+<ul>
+<li>有 <strong>1 个</strong>请求正在 decode，所以这一步要算 <code>B = 1</code> 个新 token；</li>
+<li>这个请求历史已经累积了 <code>N = 16</code> 个 token；</li>
+<li>模型一共 <code>H = 8</code> 个 query head，head_size <code>D = 128</code>；为了简化用 MHA（H_kv = H_q = 8）；</li>
+<li>所以每张卡分到的 head 是 <code>H/tp = 2</code> 个。</li>
+</ul>
+
+<h4>这一步开始之前，4 张卡上各有什么？</h4>
+
+<p>这是<strong>最重要的一张画面</strong>。先把它在脑子里建好，后面 5 步就只是「这张画面上的格子怎么挪」而已。</p>
+
+<svg class="diagram" viewBox="0 0 1180 350" width="100%">
+  <text x="20" y="22" font-size="14" font-weight="700" fill="#0a3069">Decode 开始前的静态画面（B=1, N=16, H=8, tp=dcp=4）</text>
+
+  <!-- 4 GPU columns -->
+  <g font-family="Consolas" font-size="11">
+    <!-- rank 0 -->
+    <g transform="translate(20,40)">
+      <rect width="270" height="290" fill="#f0f7ff" stroke="#0969da" stroke-width="1.5" rx="6"/>
+      <text x="135" y="20" text-anchor="middle" font-size="13" font-weight="700" fill="#0a3069">rank 0 (GPU 0)</text>
+
+      <!-- head ownership -->
+      <text x="14" y="44" font-size="11" fill="#475569">① 这张卡持有的 head：</text>
+      <g transform="translate(14,50)">
+        <rect width="60" height="22" fill="#dbeafe" stroke="#0969da"/><text x="30" y="16" text-anchor="middle">h₀</text>
+        <g transform="translate(64,0)"><rect width="60" height="22" fill="#dbeafe" stroke="#0969da"/><text x="30" y="16" text-anchor="middle">h₁</text></g>
+      </g>
+      <text x="14" y="92" font-size="10" fill="#475569">H/tp = 2 个 head（h₀, h₁）</text>
+
+      <!-- KV ownership -->
+      <text x="14" y="118" font-size="11" fill="#475569">② 这张卡持有的历史 KV（按 pos%4==0 挑）：</text>
+      <g transform="translate(14,128)">
+        <rect width="22" height="22" fill="#0969da"/><text x="11" y="16" text-anchor="middle" fill="#fff">0</text>
+        <g transform="translate(26,0)"><rect width="22" height="22" fill="#0969da"/><text x="11" y="16" text-anchor="middle" fill="#fff">4</text></g>
+        <g transform="translate(52,0)"><rect width="22" height="22" fill="#0969da"/><text x="11" y="16" text-anchor="middle" fill="#fff">8</text></g>
+        <g transform="translate(78,0)"><rect width="22" height="22" fill="#0969da"/><text x="11" y="16" text-anchor="middle" fill="#fff">12</text></g>
+      </g>
+      <text x="14" y="170" font-size="10" fill="#475569">只有 4 个 token 的 KV（N/dcp = 16/4）</text>
+      <text x="14" y="184" font-size="10" fill="#475569">shape：(4 token, 2 head, D=128)</text>
+
+      <!-- this layer's new Q/K/V -->
+      <text x="14" y="208" font-size="11" fill="#475569">③ 本层即将要算的新 Q/K/V：</text>
+      <g transform="translate(14,218)">
+        <rect width="120" height="22" fill="#cfe0ff" stroke="#0969da"/><text x="60" y="16" text-anchor="middle">Q_local (1, 2, D)</text>
+      </g>
+      <text x="14" y="256" font-size="10" fill="#475569">Q 只有自己那 2 个 head，</text>
+      <text x="14" y="268" font-size="10" fill="#475569">但 attention 应该用全部 8 个 head</text>
+      <text x="14" y="280" font-size="10" fill="#475569">→ 需要通信去凑齐另外 6 个</text>
+    </g>
+
+    <!-- rank 1 -->
+    <g transform="translate(305,40)">
+      <rect width="270" height="290" fill="#f0fbf4" stroke="#1f883d" stroke-width="1.5" rx="6"/>
+      <text x="135" y="20" text-anchor="middle" font-size="13" font-weight="700" fill="#0a6b3b">rank 1 (GPU 1)</text>
+      <text x="14" y="44" font-size="11" fill="#475569">① 持有的 head：</text>
+      <g transform="translate(14,50)">
+        <rect width="60" height="22" fill="#dcfce7" stroke="#1f883d"/><text x="30" y="16" text-anchor="middle">h₂</text>
+        <g transform="translate(64,0)"><rect width="60" height="22" fill="#dcfce7" stroke="#1f883d"/><text x="30" y="16" text-anchor="middle">h₃</text></g>
+      </g>
+      <text x="14" y="118" font-size="11" fill="#475569">② 历史 KV（pos%4==1）：</text>
+      <g transform="translate(14,128)">
+        <rect width="22" height="22" fill="#1f883d"/><text x="11" y="16" text-anchor="middle" fill="#fff">1</text>
+        <g transform="translate(26,0)"><rect width="22" height="22" fill="#1f883d"/><text x="11" y="16" text-anchor="middle" fill="#fff">5</text></g>
+        <g transform="translate(52,0)"><rect width="22" height="22" fill="#1f883d"/><text x="11" y="16" text-anchor="middle" fill="#fff">9</text></g>
+        <g transform="translate(78,0)"><rect width="22" height="22" fill="#1f883d"/><text x="11" y="16" text-anchor="middle" fill="#fff">13</text></g>
+      </g>
+      <text x="14" y="170" font-size="10" fill="#475569">同样 4 个 token，但是 pos 不一样</text>
+      <text x="14" y="208" font-size="11" fill="#475569">③ 本层即将要算的 Q：</text>
+      <g transform="translate(14,218)">
+        <rect width="120" height="22" fill="#bbf7d0" stroke="#1f883d"/><text x="60" y="16" text-anchor="middle">Q_local (1, 2, D)</text>
+      </g>
+    </g>
+
+    <!-- rank 2 -->
+    <g transform="translate(590,40)">
+      <rect width="270" height="290" fill="#fff8e1" stroke="#bf8700" stroke-width="1.5" rx="6"/>
+      <text x="135" y="20" text-anchor="middle" font-size="13" font-weight="700" fill="#7a4a00">rank 2 (GPU 2)</text>
+      <text x="14" y="44" font-size="11" fill="#475569">① 持有的 head：</text>
+      <g transform="translate(14,50)">
+        <rect width="60" height="22" fill="#fef3c7" stroke="#bf8700"/><text x="30" y="16" text-anchor="middle">h₄</text>
+        <g transform="translate(64,0)"><rect width="60" height="22" fill="#fef3c7" stroke="#bf8700"/><text x="30" y="16" text-anchor="middle">h₅</text></g>
+      </g>
+      <text x="14" y="118" font-size="11" fill="#475569">② 历史 KV（pos%4==2）：</text>
+      <g transform="translate(14,128)">
+        <rect width="22" height="22" fill="#bf8700"/><text x="11" y="16" text-anchor="middle" fill="#fff">2</text>
+        <g transform="translate(26,0)"><rect width="22" height="22" fill="#bf8700"/><text x="11" y="16" text-anchor="middle" fill="#fff">6</text></g>
+        <g transform="translate(52,0)"><rect width="22" height="22" fill="#bf8700"/><text x="11" y="16" text-anchor="middle" fill="#fff">10</text></g>
+        <g transform="translate(78,0)"><rect width="22" height="22" fill="#bf8700"/><text x="11" y="16" text-anchor="middle" fill="#fff">14</text></g>
+      </g>
+      <text x="14" y="208" font-size="11" fill="#475569">③ 本层即将要算的 Q：</text>
+      <g transform="translate(14,218)">
+        <rect width="120" height="22" fill="#fde68a" stroke="#bf8700"/><text x="60" y="16" text-anchor="middle">Q_local (1, 2, D)</text>
+      </g>
+    </g>
+
+    <!-- rank 3 -->
+    <g transform="translate(875,40)">
+      <rect width="270" height="290" fill="#faf5ff" stroke="#7c3aed" stroke-width="1.5" rx="6"/>
+      <text x="135" y="20" text-anchor="middle" font-size="13" font-weight="700" fill="#4c1d95">rank 3 (GPU 3)</text>
+      <text x="14" y="44" font-size="11" fill="#475569">① 持有的 head：</text>
+      <g transform="translate(14,50)">
+        <rect width="60" height="22" fill="#ede9fe" stroke="#7c3aed"/><text x="30" y="16" text-anchor="middle">h₆</text>
+        <g transform="translate(64,0)"><rect width="60" height="22" fill="#ede9fe" stroke="#7c3aed"/><text x="30" y="16" text-anchor="middle">h₇</text></g>
+      </g>
+      <text x="14" y="118" font-size="11" fill="#475569">② 历史 KV（pos%4==3）：</text>
+      <g transform="translate(14,128)">
+        <rect width="22" height="22" fill="#7c3aed"/><text x="11" y="16" text-anchor="middle" fill="#fff">3</text>
+        <g transform="translate(26,0)"><rect width="22" height="22" fill="#7c3aed"/><text x="11" y="16" text-anchor="middle" fill="#fff">7</text></g>
+        <g transform="translate(52,0)"><rect width="22" height="22" fill="#7c3aed"/><text x="11" y="16" text-anchor="middle" fill="#fff">11</text></g>
+        <g transform="translate(78,0)"><rect width="22" height="22" fill="#7c3aed"/><text x="11" y="16" text-anchor="middle" fill="#fff">15</text></g>
+      </g>
+      <text x="14" y="208" font-size="11" fill="#475569">③ 本层即将要算的 Q：</text>
+      <g transform="translate(14,218)">
+        <rect width="120" height="22" fill="#e9d5ff" stroke="#7c3aed"/><text x="60" y="16" text-anchor="middle">Q_local (1, 2, D)</text>
+      </g>
+    </g>
+  </g>
+</svg>
+
+<p>请仔细看这张图，把<strong>两件事</strong>记牢：</p>
+
+<ol>
+<li><strong>历史 KV 已经散开了</strong>。当时往 KV cache 里写的时候（在每一层 prefill 完之后），就是按 <code>(pos // I) % dcp</code> 这个规则把每个 token 的 K、V 投到对应的 rank 上。pos=0 写到 rank 0，pos=1 写到 rank 1，pos=2 写到 rank 2，pos=3 写到 rank 3，pos=4 又回到 rank 0…… 一直到 pos=15。所以 rank 0 上现在<strong>只有</strong> pos=0,4,8,12 这 4 个 token 的 KV。这就是「<em>本卡 KV cache 里只放了 1/dcp 的历史 KV</em>」的画面。</li>
+<li><strong>正确的 attention 需要 Q 的全部 8 个 head 去 attend 全部 16 个 token 的 KV</strong>。但每张卡上：head 只有 2 个，KV 只有 4 个 token。两个维度都不完整 → 需要通信去凑。</li>
+</ol>
+
+<p>下面 5 步就是把这两件事补齐的过程。每一步我会用一段大白话讲清楚<strong>「这一步为什么需要」「这一步本卡的张量变成了什么样」</strong>。</p>
+
+<div class="step">
+<h4>步骤 ①：本地算出本层的新 Q/K/V，把新 K/V 写到本卡 KV cache</h4>
+<div class="sub">这一步纯本地，每张卡各自跑各自的，没有通信。</div>
+
+<p>当 decode 进入这一层时，每张卡都拿到上一层的输出 <code>hidden_states</code>，并且<strong>各张卡上的这一份 hidden_states 是完全相同的</strong>（前一层最后做过 TP AllReduce，所以大家在同一起点）。</p>
+
+<p>这里 <code>q_proj</code> 是 <strong>column-parallel linear</strong>（看 §2.5.2 那张图）：每张卡上只持有 W_q 的一段列，于是算出来的 Q 也只有 2 个 head：</p>
+
+<div class="flow">
+  <div class="shape-box">所有卡：hidden_states (B=1, hidden)</div>
+  <div class="op">q_proj (column-parallel)</div>
+  <div class="arrow">→</div>
+  <div class="shape-box">rank 0: Q (1, h₀h₁, D)</div>
+  <div class="shape-box dcp">rank 1: Q (1, h₂h₃, D)</div>
+  <div class="shape-box kv">rank 2: Q (1, h₄h₅, D)</div>
+  <div class="shape-box pcp">rank 3: Q (1, h₆h₇, D)</div>
+</div>
+
+<p>K/V 同理，每张卡也只算出自己那 2 个 head 的 K/V，shape <code>(1, 2, D)</code>。把它们写入本地 KV cache：因为新 token 的位置是 <code>pos = 16</code>，而 <code>16 % 4 = 0</code>，<strong>所以这次写入只发生在 rank 0</strong>。其他三张卡这一层的 KV cache 这一步什么也没新增。</p>
+
+<div class="tip">
+<strong>这就是「本卡 KV cache 里只放了当前 token 的 KV」那句话的意思</strong>：
+<ul>
+<li>历史的 16 个 token 的 KV，是过去 16 个 decode 步「分别在 4 张卡上」一点点累积起来的（pos=0 落 rank 0，pos=1 落 rank 1，pos=2 落 rank 2，pos=3 落 rank 3，pos=4 回到 rank 0……）；</li>
+<li>当前这一步新写的 pos=16 也只落到了 1 张卡上；</li>
+<li>没有任何一张卡持有完整 16+1 个 token 的 KV。</li>
+</ul>
+所以下一步要算 attention，必然得让 4 张卡互相配合。
+</div>
+</div>
+
+<div class="step">
+<h4>步骤 ②：对 Q 做一次 DCP AllGather，让每张卡都拿到完整 8 个 head 的 Q</h4>
+<div class="sub">为什么要凑齐 head？因为「步骤 ③ 算 attention」时，每张卡只对自己持有的那段 KV 负责，但 attention 的输出必须涵盖<strong>全部 head</strong>——少一个 head，partial 结果就没法合并。</div>
+
+<p>这正是 §2.5.1 那张「AllGather」图的具体应用：4 张卡每张持有 <code>Q (1, 2, D)</code>，做完 AllGather 之后每张卡都得到 <code>Q_full (1, 8, D)</code>，即包含全部 8 个 head。</p>
+
+<svg class="diagram" viewBox="0 0 1180 180" width="100%">
+  <text x="20" y="22" font-size="13" font-weight="700" fill="#0a3069">AllGather Q（沿 head 维拼接）</text>
+
+  <!-- before -->
+  <g transform="translate(20,40)" font-family="Consolas" font-size="11">
+    <text x="0" y="0" font-size="11" fill="#475569">通信前：</text>
+    <g transform="translate(0,8)"><rect width="60" height="30" fill="#dbeafe" stroke="#0969da"/><text x="30" y="20" text-anchor="middle">h₀h₁</text></g>
+    <g transform="translate(70,8)"><rect width="60" height="30" fill="#dcfce7" stroke="#1f883d"/><text x="30" y="20" text-anchor="middle">h₂h₃</text></g>
+    <g transform="translate(140,8)"><rect width="60" height="30" fill="#fef3c7" stroke="#bf8700"/><text x="30" y="20" text-anchor="middle">h₄h₅</text></g>
+    <g transform="translate(210,8)"><rect width="60" height="30" fill="#ede9fe" stroke="#7c3aed"/><text x="30" y="20" text-anchor="middle">h₆h₇</text></g>
+    <text x="0" y="58" font-size="10" fill="#64748b">rank 0    rank 1    rank 2    rank 3</text>
+    <text x="0" y="74" font-size="10" fill="#64748b">每卡 Q shape = (1, 2, D)</text>
+  </g>
+
+  <text x="320" y="76" font-size="22" fill="#0a3069">→ AllGather (dim=1) →</text>
+
+  <!-- after -->
+  <g transform="translate(520,40)" font-family="Consolas" font-size="11">
+    <text x="0" y="0" font-size="11" fill="#475569">通信后：每张卡都拿到完整 8 个 head 的 Q</text>
+    <g transform="translate(0,8)">
+      <rect width="20" height="30" fill="#dbeafe" stroke="#0969da"/><text x="10" y="20" text-anchor="middle">h₀</text>
+      <g transform="translate(22,0)"><rect width="20" height="30" fill="#dbeafe" stroke="#0969da"/><text x="10" y="20" text-anchor="middle">h₁</text></g>
+      <g transform="translate(44,0)"><rect width="20" height="30" fill="#dcfce7" stroke="#1f883d"/><text x="10" y="20" text-anchor="middle">h₂</text></g>
+      <g transform="translate(66,0)"><rect width="20" height="30" fill="#dcfce7" stroke="#1f883d"/><text x="10" y="20" text-anchor="middle">h₃</text></g>
+      <g transform="translate(88,0)"><rect width="20" height="30" fill="#fef3c7" stroke="#bf8700"/><text x="10" y="20" text-anchor="middle">h₄</text></g>
+      <g transform="translate(110,0)"><rect width="20" height="30" fill="#fef3c7" stroke="#bf8700"/><text x="10" y="20" text-anchor="middle">h₅</text></g>
+      <g transform="translate(132,0)"><rect width="20" height="30" fill="#ede9fe" stroke="#7c3aed"/><text x="10" y="20" text-anchor="middle">h₆</text></g>
+      <g transform="translate(154,0)"><rect width="20" height="30" fill="#ede9fe" stroke="#7c3aed"/><text x="10" y="20" text-anchor="middle">h₇</text></g>
+    </g>
+    <text x="0" y="58" font-size="10" fill="#0a3069" font-weight="700">每张卡的 Q_full shape = (1, 8, D)，全部 4 张卡上都一样</text>
+    <text x="0" y="74" font-size="10" fill="#64748b">（rank 1/2/3 上同样的一份，省略）</text>
+  </g>
+</svg>
+
+<div class="file-ref">代码：<code>vllm/v1/attention/backends/flash_attn.py:907</code><br>
+<code>query_across_dcp = get_dcp_group().all_gather(query, dim=1)</code></div>
+</div>
+
+<div class="step">
+<h4>步骤 ③：每张卡用「完整 Q + 自己那段 KV」算一次 FlashAttention</h4>
+<div class="sub">这一步每张卡都是纯本地计算。算完之后每张卡得到「<em>部分</em> attention 输出」——之所以是「部分」，是因为本卡只看到了 4 个 KV token，剩下 12 个 token 还在别人那里。</div>
+
+<p>具体到 rank 0：</p>
+
+<div class="flow">
+  <div class="shape-box dcp">Q_full (1, 8, D)</div>
+  <div class="arrow">+</div>
+  <div class="shape-box kv">本地 KV (pos=0,4,8,12) × 8 head × D</div>
+  <div class="arrow">→</div>
+  <div class="op">FlashAttention</div>
+  <div class="arrow">→</div>
+  <div class="shape-box">part_out (1, 8, D)</div>
+  <div class="shape-box">part_lse (1, 8)</div>
+</div>
+
+<p>这里多出来一个 <code>part_lse</code>，需要解释一下：</p>
+
+<div class="note">
+<strong>LSE（log-sum-exp）是什么、为什么需要？</strong><br>
+softmax 算 attention 时其实是 <code>out = Σᵢ softmax(qkᵢ) · vᵢ</code>。当我们只看一部分 KV token 时，得到的 out 是「<em>错的</em>」——因为分母（softmax 的归一化项）只统计了本卡的 token，少算了别人那 12 个。<br><br>
+FlashAttention 在返回 <code>part_out</code> 之外，<strong>额外返回每个 head 的 <code>part_lse = log(Σᵢ exp(qkᵢ))</code></strong>，即 softmax 分母的对数。这是「本卡漏算了多少」的精确信息。下一步合并的时候，4 张卡只要把各自的 LSE 互相对比一下，就可以把 4 份 part_out 按正确权重加起来得到全局正确的 attention 输出。<br><br>
+你不用记 LSE 公式，只要记住：<strong>part_out + part_lse 一对儿，是「我对自己那段 KV 算了 attention，但还差和其他卡合并」的标记</strong>。
+</div>
+</div>
+
+<div class="step">
+<h4>步骤 ④：跨 4 张卡合并 part_out + part_lse → 拼出最终 attention 输出（再切回 H/tp）</h4>
+<div class="sub">这一步对应代码里的 <code>cp_lse_ag_out_rs</code>，名字本身就是「<strong>AllGather LSE → 修正 part_out → ReduceScatter</strong>」三步缩写。</div>
+
+<svg class="diagram" viewBox="0 0 1180 280" width="100%">
+  <text x="20" y="22" font-size="13" font-weight="700" fill="#0a3069">cp_lse_ag_out_rs 的三个动作</text>
+
+  <!-- (a) AllGather LSE -->
+  <g transform="translate(20,40)">
+    <text x="0" y="0" font-size="12" font-weight="700" fill="#0a3069">(a) AllGather LSE：让每张卡都知道 4 张卡各自的 LSE</text>
+    <g font-family="Consolas" font-size="10" transform="translate(0,10)">
+      <g><rect width="50" height="22" fill="#dbeafe" stroke="#0969da"/><text x="25" y="15" text-anchor="middle">lse₀</text></g>
+      <g transform="translate(60,0)"><rect width="50" height="22" fill="#dcfce7" stroke="#1f883d"/><text x="25" y="15" text-anchor="middle">lse₁</text></g>
+      <g transform="translate(120,0)"><rect width="50" height="22" fill="#fef3c7" stroke="#bf8700"/><text x="25" y="15" text-anchor="middle">lse₂</text></g>
+      <g transform="translate(180,0)"><rect width="50" height="22" fill="#ede9fe" stroke="#7c3aed"/><text x="25" y="15" text-anchor="middle">lse₃</text></g>
+      <text x="260" y="15" font-size="14" fill="#0a3069">→ 每张卡都拿到 [lse₀, lse₁, lse₂, lse₃]</text>
+    </g>
+  </g>
+
+  <!-- (b) 修正 part_out -->
+  <g transform="translate(20,100)">
+    <text x="0" y="0" font-size="12" font-weight="700" fill="#0a3069">(b) Triton kernel 用 4 个 lse 算出每个 part 的真实权重，把本卡 part_out 校正成「应有的份额」</text>
+    <text x="0" y="22" font-size="11" fill="#475569">这一步纯本地算，不通信。校正后每张卡上的 (1, 8, D) 张量里已经按真实权重缩放过。</text>
+    <text x="0" y="40" font-size="11" fill="#475569">4 张卡的 corrected_out 加起来 = 全局正确的 attention 输出。</text>
+  </g>
+
+  <!-- (c) ReduceScatter -->
+  <g transform="translate(20,180)">
+    <text x="0" y="0" font-size="12" font-weight="700" fill="#0a3069">(c) ReduceScatter (dim=1)：4 张卡按 head 维相加，每卡只留下自己那 2 个 head</text>
+    <text x="0" y="18" font-size="11" fill="#475569">回到「每卡 H/tp = 2 个 head」的状态，正好可以无缝接下面的 o_proj。</text>
+
+    <g font-family="Consolas" font-size="10" transform="translate(0,28)">
+      <g><rect width="160" height="24" fill="#fff" stroke="#94a3b8" stroke-dasharray="3,3"/><text x="80" y="16" text-anchor="middle">corrected_out (1, 8, D)</text></g>
+      <text x="180" y="18" font-size="11" fill="#475569">×4 张卡相加 → 切成 4 段 →</text>
+
+      <g transform="translate(400,0)"><rect width="60" height="24" fill="#dbeafe" stroke="#0969da"/><text x="30" y="16" text-anchor="middle">h₀h₁</text></g>
+      <g transform="translate(465,0)"><rect width="60" height="24" fill="#dcfce7" stroke="#1f883d"/><text x="30" y="16" text-anchor="middle">h₂h₃</text></g>
+      <g transform="translate(530,0)"><rect width="60" height="24" fill="#fef3c7" stroke="#bf8700"/><text x="30" y="16" text-anchor="middle">h₄h₅</text></g>
+      <g transform="translate(595,0)"><rect width="60" height="24" fill="#ede9fe" stroke="#7c3aed"/><text x="30" y="16" text-anchor="middle">h₆h₇</text></g>
+      <text x="670" y="16" font-size="11" fill="#0a3069">每张卡的 out_local shape = (1, 2, D)</text>
+    </g>
+  </g>
+</svg>
+
+<div class="file-ref">代码：<code>vllm/v1/attention/ops/common.py:cp_lse_ag_out_rs()</code></div>
+
+<p>关键的妙处在 ReduceScatter：</p>
+<ul>
+<li><strong>"Reduce"（相加）</strong>：把 4 张卡的「校正后 part_out」逐位置加起来，正好得到全局 attention 输出。</li>
+<li><strong>"Scatter"（按 rank 切走自己那段）</strong>：相加的结果其实有 <code>(1, 8, D)</code>，但每张卡只需要自己负责的 2 个 head——所以直接切走，节省 75% 带宽和显存。</li>
+</ul>
+
+<p>做完这一步，每张卡的 attention 输出又回到了 <code>(1, H/tp=2, D)</code>。注意这正好是<strong>纯 TP（不开 DCP）时 attention 输出的 shape</strong>——也就是说 DCP 的「侵入」到这里就结束了，后面 o_proj 完全不知道发生过任何事。</p>
+</div>
+
+<div class="step">
+<h4>步骤 ⑤：o_proj + 一次 TP AllReduce → 这一层 attention 输出</h4>
+<div class="sub">这一步是标准的 row-parallel linear（看 §2.5.2 那张图），跟不开 DCP 时完全一样。</div>
+
+<div class="flow">
+  <div class="shape-box dcp">每卡：out_local (1, H/tp=2, D)</div>
+  <div class="op">o_proj (row-parallel)</div>
+  <div class="arrow">→</div>
+  <div class="shape-box">每卡：partial_hidden (1, hidden)</div>
+  <div class="op coll">TP AllReduce</div>
+  <div class="arrow">→</div>
+  <div class="shape-box">每卡：hidden_out (1, hidden)（完全相同的完整输出）</div>
+</div>
+
+<p>到这里这一层 attention 就结束了，下一层又会以「每张卡同一份 hidden_states」为起点开始。</p>
+</div>
+
+<div class="note">
+<strong>这一层 attention 多了几次通信？</strong>
+比起纯 TP，DCP 多了三次集合通信：① <code>AllGather(Q)</code>、② <code>AllGather(LSE)</code>、③ <code>ReduceScatter(out)</code>。但作为回报，本卡 FlashAttention 实际算的是 <code>1/dcp = 1/4</code> 的 KV 序列——序列越长，DCP 越值。这也是为什么 DCP 在 128K+ 超长序列下能显著降低 TPOT。
+</div>
+
+<!-- ============== DCP PREFILL ============== -->
+<h3 id="dcp-prefill">3.3 Chunked Prefill + DCP：context 与 query 两次 FA 的合并</h3>
+
+<p>Chunked prefill 时一次 forward 里同时有「新来的 query token」和「已经写过 KV 的旧 context」，DCP 需要把两部分分别算再合并。<a>flash_attn.py</a> 里 <code>_forward_with_dcp</code> 的做法是：</p>
+
+<svg class="diagram" viewBox="0 0 1100 290" width="100%">
+  <text x="20" y="22" font-size="13" fill="#334155">DCP Chunked Prefill 一次 forward 的两路 FlashAttention</text>
+
+  <!-- Box: Context path -->
+  <g transform="translate(40,50)">
+    <rect width="480" height="210" fill="#eaf7ee" stroke="#1f883d" stroke-width="1.5" rx="6"/>
+    <text x="240" y="22" text-anchor="middle" font-size="13" fill="#0a6b3b" font-weight="700">A. 对 cached context 的 attention（需要 DCP 合并）</text>
+    <g font-size="12" fill="#0a3069">
+      <text x="20" y="50">Q  (B, H_q/tp, D)</text>
+      <text x="20" y="68" fill="#7a4a00">─ AllGather across DCP (dim=1) ──▶</text>
+      <text x="20" y="86">Q_full (B, H_q, D)</text>
+      <text x="20" y="108">KV_local = 本卡持有的 (≈N_ctx/dcp 个 token)</text>
+      <text x="20" y="130" fill="#7a4a00">─ FA varlen + return_lse ─▶</text>
+      <text x="20" y="148">part_ctx_out (B, H_q, D)</text>
+      <text x="20" y="166">part_ctx_lse (B, H_q)</text>
+      <text x="20" y="188" fill="#7a4a00">─ cp_lse_ag_out_rs ─▶</text>
+      <text x="20" y="206">ctx_out (B, H_q/tp, D), ctx_lse (B, H_q/tp)</text>
+    </g>
+  </g>
+
+  <!-- Box: Local query path -->
+  <g transform="translate(550,50)">
+    <rect width="510" height="210" fill="#dbeafe" stroke="#0969da" stroke-width="1.5" rx="6"/>
+    <text x="255" y="22" text-anchor="middle" font-size="13" fill="#0a3069" font-weight="700">B. 对本 chunk 内 query↔query 的 attention（纯本地）</text>
+    <g font-size="12" fill="#0a3069">
+      <text x="20" y="50">Q (B, H_q/tp, D)（不需要 gather，本地够用）</text>
+      <text x="20" y="68">K, V 都是本 chunk 内的新 token：(B, H_kv/tp, D)</text>
+      <text x="20" y="90" fill="#0550ae">─ FA varlen + return_lse + causal=True ─▶</text>
+      <text x="20" y="108">q_out (B, H_q/tp, D)</text>
+      <text x="20" y="126">q_lse (B, H_q/tp)</text>
+      <text x="20" y="160" font-size="13" fill="#cf222e">最后一步：merge_attn_states(ctx_out, q_out)</text>
+      <text x="20" y="180" font-size="12">用两个 lse 的差按比例融合 → 单层 attention 最终 out</text>
+      <text x="20" y="200" font-size="12">最终 out: (B, H_q/tp, D)</text>
+    </g>
+  </g>
+</svg>
+
+<p>注意只有 <strong>context 路径</strong>才需要 DCP 通信，因为 cached KV 散落在多 rank 上；query 路径自己就在本 rank，按普通因果 FA 算就行。两路结果通过 <code>merge_attn_states</code>（用各自 LSE）拼成最终输出。</p>
+
+<!-- ============== DCP PD ============== -->
+<h3 id="dcp-pd">3.4 PD 分离：prefill rank ↔ decode rank 的配对</h3>
+
+<p>在 PD（Prefill/Decode）分离部署里，prefill 实例和 decode 实例往往配置不一样（比如 <code>tp_P=8, dcp_P=4</code> 配 <code>tp_D=4, dcp_D=2</code>）。一个 prefill rank 算完 KV 之后，需要把自己持有的那一段 KV 切片精准送给 decode 实例里对应的 rank。</p>
+
+<p>判断两个 rank 是否「覆盖同一段 KV」的条件可以拆成两条：</p>
+
+<table>
+<thead><tr><th>维度</th><th>判断条件</th><th>直觉</th></tr></thead>
+<tbody>
+<tr><td>Head（TP 切）</td><td>两边 KV head 组在 <code>[0, H_kv)</code> 上有交集</td><td>P 端的 <code>tp_rank_P</code> 持有的 KV head 区间，要跟 D 端的 <code>tp_rank_D</code> 持有的区间重叠</td></tr>
+<tr><td>Token（DCP 切）</td><td><code>flat_idx_P % g == flat_idx_D % g</code>，其中 <code>g = gcd(dcp_P, dcp_D)</code>，<code>flat_idx = tp_rank·pcp_size + pcp_rank</code></td><td>token 是按「(pos // I) % cp_size」分给某 rank 的；两边 cp_size 不一致时，能命中的 rank 对要满足同余</td></tr>
+</tbody>
+</table>
+
+<p>当 <code>dcp_P == dcp_D</code> 时，token 条件退化成 <code>dcp_local_P == dcp_local_D</code>，即 1:1 配对；<code>dcp_P > dcp_D</code> 是 N:1（多个 P rank 配同一个 D rank），反之 1:N。文档里也给了一份 <code>numpy</code> 的向量化匹配实现 <code>get_prefill_ranks_for_decode_rank()</code>，思路就是把 head 范围用 <code>arange</code> 算出来，再对 token 维做线性同余的 <code>arange</code> 枚举。</p>
+
+<!-- ========================================================== -->
+<h2 id="pcp">4. PCP 详解：DualChunkSwap 是怎么切的</h2>
+
+<h3 id="pcp-split">4.1 序列切分：2 × pcp 个 chunk 的 head/tail 交错</h3>
+
+<p>因果 attention 下，如果按朴素方式把 prefill 的 query token 平均切给 <code>pcp_size</code> 个 rank，<strong>每个 rank 上 attention 的「待 attend 的 KV 长度」差异巨大</strong>：rank 0 只需要 attend 到自己那段，rank pcp-1 几乎需要 attend 整条序列。所以 PCP 采用了一个非常巧妙的 <strong>DualChunkSwap</strong>（双块换位）切法。</p>
+
+<div class="file-ref">参考：<a>vllm_ascend/worker/pcp_utils.py:PCPManager.update_tokens_for_pcp()</a></div>
+
+<p><strong>规则</strong>（设 <code>P = pcp_size</code>，一个请求的 padded 长度为 <code>L</code>）：</p>
+
+<ol>
+<li>把 <code>L</code> 向上 padding 到 <code>2P</code> 的倍数，等分成 <code>2P</code> 个 chunk，标号 <code>0..2P-1</code>。</li>
+<li>rank <code>r</code> 持有 chunk <code>r</code>（head）+ chunk <code>2P - 1 - r</code>（tail），并将 head 拼在前，tail 拼在后。</li>
+</ol>
+
+<p>下面用一个 <code>P=2</code>、序列长 18 的例子直接画出来。padding 到 8 的倍数 → 24，chunk size = 3：</p>
+
+<div class="legend">
+  <span><span class="sw" style="background:#cfe0ff;border:1px solid #7aa7ff"></span>head chunk（rank 持有）</span>
+  <span><span class="sw" style="background:#fde6cd;border:1px solid #fb923c"></span>tail chunk（rank 持有）</span>
+  <span><span class="sw" style="background:#e5e7eb;border:1px solid #cbd5e1"></span>padding</span>
+</div>
+
+<table>
+<thead><tr><th>chunk #</th><th>0</th><th>1</th><th>2</th><th>3</th></tr></thead>
+<tbody>
+<tr><td>tokens</td>
+  <td><div class="chips"><span class="chip">t0</span><span class="chip">t1</span><span class="chip">t2</span></div></td>
+  <td><div class="chips"><span class="chip">t3</span><span class="chip">t4</span><span class="chip">t5</span></div></td>
+  <td><div class="chips"><span class="chip">t6</span><span class="chip">t7</span><span class="chip">t8</span></div></td>
+  <td><div class="chips"><span class="chip">t9</span><span class="chip">t10</span><span class="chip">t11</span></div></td>
+</tr>
+<tr><td>chunk #</td><td>4</td><td>5</td><td>6</td><td>7</td></tr>
+<tr><td>tokens</td>
+  <td><div class="chips"><span class="chip">t12</span><span class="chip">t13</span><span class="chip">t14</span></div></td>
+  <td><div class="chips"><span class="chip">t15</span><span class="chip">t16</span><span class="chip">t17</span></div></td>
+  <td><div class="chips"><span class="chip pad">PAD</span><span class="chip pad">PAD</span><span class="chip pad">PAD</span></div></td>
+  <td><div class="chips"><span class="chip pad">PAD</span><span class="chip pad">PAD</span><span class="chip pad">PAD</span></div></td>
+</tr>
+</tbody>
+</table>
+
+<div class="twocol">
+<div>
+<h4>rank 0：chunk 0 + chunk 7</h4>
+<div class="chips">
+  <span class="chip h">t0</span><span class="chip h">t1</span><span class="chip h">t2</span>
+  <span class="chip sep">|</span>
+  <span class="chip t pad">PAD</span><span class="chip t pad">PAD</span><span class="chip t pad">PAD</span>
+</div>
+<small>local query 共 <code>L/P = 6</code> token（含 padding）</small>
+</div>
+<div>
+<h4>rank 1：chunk 1 + chunk 6</h4>
+<div class="chips">
+  <span class="chip h">t3</span><span class="chip h">t4</span><span class="chip h">t5</span>
+  <span class="chip sep">|</span>
+  <span class="chip t pad">PAD</span><span class="chip t pad">PAD</span><span class="chip t pad">PAD</span>
+</div>
+</div>
+</div>
+
+<p>当 <code>P=4</code> 时类似，chunk 数变为 8：rank 0 拿 <code>{0, 7}</code>、rank 1 拿 <code>{1, 6}</code>、rank 2 拿 <code>{2, 5}</code>、rank 3 拿 <code>{3, 4}</code>。<strong>每对 head+tail 的 chunk 在因果掩码下「能 attend 的总 KV 长度恰好都接近 L/2」</strong>，从而保证了 prefill 时每张卡 attention 的算力负载差异极小。</p>
+
+<h3 id="pcp-pos">4.2 PCPManager 输出的几个关键 index</h3>
+
+<p>切分本身只是第一步，模型 forward 时还要能在多个 rank 间互相 allgather 出完整的 hidden_states / KV，并恢复正确顺序。<code>PCPManager</code> 维护下面几张索引表：</p>
+
+<table>
+<thead><tr><th>名字</th><th>shape</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td><code>pcp_tokens</code></td><td><code>(num_reqs,)</code></td><td>每个请求落在本 rank 上的 token 数（含 padding）</td></tr>
+<tr><td><code>num_pcp_pads_cpu</code></td><td><code>(num_reqs,)</code></td><td>本请求在 padding 时塞了多少个 PAD</td></tr>
+<tr><td><code>pcp_unpad_mask_cpu</code></td><td><code>(total_padded_tokens,)</code></td><td>布尔 mask，<code>True</code> 表示这个位置不是 padding，做 allgather 之后用来过滤</td></tr>
+<tr><td><code>pcp_allgather_restore_idx</code></td><td><code>(total_padded_tokens,)</code></td><td>把 allgather 出来的 <code>[rank0_chunks, rank1_chunks, ...]</code> 重排回原始 token 顺序的 <code>argsort</code> 索引</td></tr>
+<tr><td><code>q_head_idx_tensor / q_tail_idx_tensor</code></td><td><code>(num_local_query,)</code> 各半</td><td>把本 rank 的 query 拆成「head chunk」「tail chunk」两段，分别和不同 KV 段算 attention</td></tr>
+<tr><td><code>kv_with_q_head_nomask_idx / kv_with_q_head_mask_idx</code></td><td><code>(...)</code></td><td>head chunk 对应需要 attend 的 KV：左边是已经被前面 chunk 完全覆盖、不再需要 causal mask 的部分；右边是当前 rank chunk 自己内部、还需要因果 mask 的部分</td></tr>
+</tbody>
+</table>
+
+<p>文档里有一段很形象的例子：<code>tokens=[1, 5, 8], pcp_world_size=2</code>，</p>
+
+<pre><span class="cm"># pcp_rank=0:  pcp_tokens=[1,4,4], positions=[0, 0,1,6,7, 0,1,6,7]
+# pcp_rank=1:  pcp_tokens=[1,4,4], positions=[0, 2,3,4,5, 2,3,4,5]
+# num_pcp_pads_cpu = [1, 3, 0]    # 第一条 decode 复制 1 次；第二条补了 3 个 PAD；第三条正好整除
+# pcp_unpad_mask_cpu = [T, F, T,T,T,T,T, F,F, F,T,T,T,T,T,T,T,T]
+# pcp_allgather_restore_idx = [0,9, 1,2,10,11,12,13, 3,4,5,6,14,15,16,17, 7,8]</span></pre>
+
+<p>注意 <strong>decode 请求在 PCP 下不被切，而是被「复制」</strong>到每个 rank 上（因为只有 1 个 token，切了反而吃亏；rank 0 当真正的 owner，其他 rank 只是配合做 allgather）。</p>
+
+<h3 id="pcp-prefill">4.3 PCP Prefill 的 ring 通信与 head/tail attention 拆分</h3>
+
+<p>切完之后，每个 rank 本地就有 <strong>head chunk 的 Q/K/V</strong> 和 <strong>tail chunk 的 Q/K/V</strong>。要算 attention，本卡的 Q 必须能 attend 到「全局所有 chunk 上的 KV」——这就需要 ring/allgather 通信。一个 rank 上 attention 的拆解大致如下（以 P=4、本 rank=1，所以 head chunk id=1、tail chunk id=6 为例）：</p>
+
+<svg class="diagram" viewBox="0 0 1100 320" width="100%">
+  <text x="20" y="22" font-size="13" fill="#334155">PCP Prefill：rank 1 的两段 query 各自需要 attend 哪些 KV chunk（P=4）</text>
+
+  <!-- head chunk for rank 1 -->
+  <g transform="translate(40,50)">
+    <rect width="1020" height="110" fill="#f5f9ff" stroke="#0969da" stroke-width="1.4" rx="6"/>
+    <text x="14" y="26" font-size="13" fill="#0a3069" font-weight="700">A. head chunk (id=1) → 因果可见的 KV chunk 是 {0, 1}</text>
+    <g font-family="Consolas" font-size="12">
+      <g transform="translate(20,42)">
+        <rect width="80" height="50" fill="#cfe0ff" stroke="#7aa7ff"/><text x="40" y="30" text-anchor="middle">Q chunk 1</text>
+      </g>
+      <text x="120" y="74" font-size="14" fill="#475569">×</text>
+      <g transform="translate(140,42)">
+        <rect width="80" height="50" fill="#dbeafe" stroke="#0969da"/><text x="40" y="20" text-anchor="middle">KV ch 0</text>
+        <text x="40" y="38" text-anchor="middle" font-size="10" fill="#0a3069">nomask</text>
+      </g>
+      <g transform="translate(230,42)">
+        <rect width="80" height="50" fill="#dbeafe" stroke="#0969da"/><text x="40" y="20" text-anchor="middle">KV ch 1</text>
+        <text x="40" y="38" text-anchor="middle" font-size="10" fill="#0a3069">causal mask</text>
+      </g>
+      <text x="330" y="74" font-size="12" fill="#475569">⏤ 其余 chunk 都在未来 → 不参与</text>
+    </g>
+  </g>
+
+  <!-- tail chunk for rank 1 -->
+  <g transform="translate(40,180)">
+    <rect width="1020" height="110" fill="#fff6ed" stroke="#fb923c" stroke-width="1.4" rx="6"/>
+    <text x="14" y="26" font-size="13" fill="#9a3412" font-weight="700">B. tail chunk (id=6) → 因果可见的 KV chunk 是 {0,1,2,3,4,5,6}</text>
+    <g font-family="Consolas" font-size="12">
+      <g transform="translate(20,42)">
+        <rect width="80" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="40" y="30" text-anchor="middle">Q chunk 6</text>
+      </g>
+      <text x="120" y="74" font-size="14" fill="#475569">×</text>
+      <g transform="translate(140,42)" font-size="11">
+        <g><rect width="60" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="30" text-anchor="middle">ch 0</text></g>
+        <g transform="translate(65,0)"><rect width="60" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="30" text-anchor="middle">ch 1</text></g>
+        <g transform="translate(130,0)"><rect width="60" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="30" text-anchor="middle">ch 2</text></g>
+        <g transform="translate(195,0)"><rect width="60" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="30" text-anchor="middle">ch 3</text></g>
+        <g transform="translate(260,0)"><rect width="60" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="30" text-anchor="middle">ch 4</text></g>
+        <g transform="translate(325,0)"><rect width="60" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="30" text-anchor="middle">ch 5</text></g>
+        <g transform="translate(390,0)"><rect width="65" height="50" fill="#fde6cd" stroke="#fb923c"/><text x="30" y="20" text-anchor="middle">ch 6</text><text x="30" y="38" text-anchor="middle" font-size="10">causal</text></g>
+      </g>
+      <text x="640" y="74" font-size="12" fill="#475569">⬅ 总共 6.5 个 chunk，刚好和 head chunk 的 1.5 个互补成 8 个</text>
+    </g>
+  </g>
+</svg>
+
+<p>这正是「head + tail」之所以平衡的关键：</p>
+
+<ul>
+<li>rank 0 持有的 chunk 是 <code>{0, 7}</code> → attend <code>(0.5 + 7.5) = 8</code> 个 chunk 的 KV</li>
+<li>rank 1 持有 <code>{1, 6}</code> → attend <code>(1.5 + 6.5) = 8</code> 个 chunk</li>
+<li>rank 2 持有 <code>{2, 5}</code> → attend <code>(2.5 + 5.5) = 8</code> 个 chunk</li>
+<li>rank 3 持有 <code>{3, 4}</code> → attend <code>(3.5 + 4.5) = 8</code> 个 chunk</li>
+</ul>
+
+<p>所有 rank attention 总工作量完全相同。每个 rank 实际还会把 <strong>对每个其他 chunk 的 KV</strong> 通过 ring/allgather 拿到，然后调一次 FA。具体到代码里，<code>kv_with_q_head_nomask_idx</code> / <code>kv_with_q_head_mask_idx</code>（以及 tail 对应的两个）就是把这些 KV 段在 allgathered 大张量里的下标记下来。</p>
+
+<p>整理一下张量 shape：</p>
+
+<div class="flow">
+  <div class="shape-box pcp">Q_local: (B/P_pad, H_q/tp, D)</div>
+  <div class="op coll">PCP AllGather hidden (dim=0)</div>
+  <div class="arrow">→</div>
+  <div class="shape-box pcp">Q_full(_padded): (B_pad, H_q/tp, D)</div>
+</div>
+<div class="flow">
+  <div class="op">index_select with restore_idx</div>
+  <div class="arrow">→</div>
+  <div class="shape-box pcp">还原成原始 token 顺序的 Q：(B, H_q/tp, D)</div>
+  <div class="op">drop padded rows by unpad_mask</div>
+</div>
+
+<h3 id="pcp-decode">4.4 PCP Decode：query 复制 + KV 全副本</h3>
+
+<p>Decode 时序列上没有 prefill 那么长的 query，PCP 退化为：<strong>所有 rank 共享同一份 decode token</strong>（rank 0 是 owner，其他 rank 拷贝）。每个 rank 的 K/V 因为之前 prefill 都已经过 allgather + restore，<strong>每个 rank 都持有完整的 KV cache 切片</strong>（PCP 不进一步切 KV，只有 DCP 才切 KV）。</p>
+
+<p>所以 PCP decode 时和不开 PCP 的 decode 几乎完全一样，只是在 logits sample 阶段会把每个 PCP rank 上「重复的 decode 输出」筛回 rank 0。<strong>这也是 PCP 在 decode 上没什么开销的原因</strong>，PCP 主要拼 TTFT。</p>
+
+<!-- ========================================================== -->
+<h2 id="combo">5. PCP × DCP 叠加</h2>
+
+<p>把两者放一起，物理 rank 排布仍然按 <code>(pcp, tp)</code>。DCP 在 TP 内继续切；PCP 跨 TP 组形成另一层组。还以 <strong>PCP=2, TP=4, DCP=4</strong> 为例（8 张卡）：</p>
+
+<div class="twocol">
+<div>
+<h4>每个 rank 上「在算什么」</h4>
+<table>
+<thead><tr><th>rank</th><th>tp</th><th>pcp</th><th>持有 head</th><th>持有 KV 的 token 子集</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>0</td><td>0</td><td>H[0..H/4)</td><td>pos % 4 == 0</td></tr>
+<tr><td>1</td><td>1</td><td>0</td><td>H[H/4..H/2)</td><td>pos % 4 == 1</td></tr>
+<tr><td>2</td><td>2</td><td>0</td><td>H[H/2..3H/4)</td><td>pos % 4 == 2</td></tr>
+<tr><td>3</td><td>3</td><td>0</td><td>H[3H/4..H)</td><td>pos % 4 == 3</td></tr>
+<tr><td>4</td><td>0</td><td>1</td><td>H[0..H/4)</td><td>pos % 4 == 0 (副本)</td></tr>
+<tr><td>5</td><td>1</td><td>1</td><td>H[H/4..H/2)</td><td>pos % 4 == 1 (副本)</td></tr>
+<tr><td>6</td><td>2</td><td>1</td><td>H[H/2..3H/4)</td><td>pos % 4 == 2 (副本)</td></tr>
+<tr><td>7</td><td>3</td><td>1</td><td>H[3H/4..H)</td><td>pos % 4 == 3 (副本)</td></tr>
+</tbody>
+</table>
+<small>因为 PCP 不切 KV，每个 PCP slice 内部 DCP 独立切，所以 pcp=1 那 4 张卡是 pcp=0 的「KV 副本」（只是 query 切分不同）。</small>
+</div>
+<div>
+<h4>三种通信组怎么用</h4>
+<ul>
+<li><strong>TP all-reduce</strong> 用于 <code>o_proj</code>、<code>mlp.down_proj</code>，仍在 <code>[0,1,2,3]</code>/<code>[4,5,6,7]</code> 上做</li>
+<li><strong>DCP allgather Q + reduce_scatter out</strong> 用于 attention，作用范围与 TP group 重合（DCP 组 = TP 组）</li>
+<li><strong>PCP allgather hidden_states</strong> 用于 prefill 阶段把切开的 query 重组回完整序列，跨 <code>[0,4]</code>/<code>[1,5]</code>/<code>[2,6]</code>/<code>[3,7]</code> 这 4 组</li>
+</ul>
+</div>
+</div>
+
+<svg class="diagram" viewBox="0 0 1100 340" width="100%">
+  <text x="20" y="22" font-size="13" fill="#334155">PCP=2 / TP=4 / DCP=4 时一层 attention 的完整数据流（forward）</text>
+
+  <!-- columns -->
+  <g font-size="11" fill="#0a3069">
+    <text x="40" y="44">hidden_in</text>
+    <text x="200" y="44">q_proj (col-TP)</text>
+    <text x="340" y="44">DCP allgather Q</text>
+    <text x="500" y="44">local FA + LSE</text>
+    <text x="680" y="44">cp_lse_ag_out_rs</text>
+    <text x="850" y="44">o_proj (row-TP)</text>
+    <text x="1010" y="44">+ TP allreduce</text>
+  </g>
+
+  <!-- shapes -->
+  <g font-family="Consolas" font-size="11">
+    <g transform="translate(20,60)">
+      <rect width="140" height="50" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="70" y="22" text-anchor="middle">(S_local, hidden)</text>
+      <text x="70" y="40" text-anchor="middle" fill="#475569">S_local = S/2P (PCP)</text>
+    </g>
+    <g transform="translate(180,60)">
+      <rect width="140" height="50" fill="#dbeafe" stroke="#0969da"/>
+      <text x="70" y="22" text-anchor="middle">Q (S_local, H/4, D)</text>
+      <text x="70" y="40" text-anchor="middle" fill="#0a3069">H/tp = H/4</text>
+    </g>
+    <g transform="translate(340,60)">
+      <rect width="150" height="50" fill="#eaf7ee" stroke="#1f883d"/>
+      <text x="75" y="22" text-anchor="middle">Q_full (S_local, H, D)</text>
+      <text x="75" y="40" text-anchor="middle" fill="#0a6b3b">所有 head 全到位</text>
+    </g>
+    <g transform="translate(510,60)">
+      <rect width="160" height="50" fill="#fff8c5" stroke="#d4a72c"/>
+      <text x="80" y="22" text-anchor="middle">part_out (S_local, H, D)</text>
+      <text x="80" y="40" text-anchor="middle" fill="#7a4a00">+ part_lse (S_local, H)</text>
+    </g>
+    <g transform="translate(690,60)">
+      <rect width="160" height="50" fill="#dbeafe" stroke="#0969da"/>
+      <text x="80" y="22" text-anchor="middle">out (S_local, H/4, D)</text>
+      <text x="80" y="40" text-anchor="middle" fill="#0a3069">回到 H/tp</text>
+    </g>
+    <g transform="translate(860,60)">
+      <rect width="140" height="50" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="70" y="22" text-anchor="middle">(S_local, hidden)</text>
+    </g>
+    <g transform="translate(1020,60)">
+      <rect width="60" height="50" fill="#f1f5f9" stroke="#94a3b8"/>
+      <text x="30" y="32" text-anchor="middle">→</text>
+    </g>
+  </g>
+
+  <!-- PCP path notes -->
+  <g font-size="11" fill="#4c1d95">
+    <text x="20" y="160" font-weight="700">在 attention 之外，PCP 还会出现以下通信：</text>
+    <text x="20" y="180">① prefill 入口处：每个 rank 持有 S/P_pad 个 token；做 hidden_states 的 PCP all_gather (dim=0)，再 index_select 还原。</text>
+    <text x="20" y="200">② sample / logits 时：先 PCP all_gather logits，再用 num_pcp_pads / unpad_mask 还原成原始序列长度。</text>
+    <text x="20" y="220">③ MTP / draft model：也用 PCP 同样的切分逻辑（pcp_utils.py 里把 mtp_slot_pad 单独算了一份）。</text>
+  </g>
+
+  <!-- DCP path notes -->
+  <g font-size="11" fill="#0a6b3b">
+    <text x="20" y="260" font-weight="700">DCP 这一侧每层只新增三次通信：</text>
+    <text x="20" y="280">① attention 入口：dcp.all_gather(query, dim=1)，把 Q 凑到 H 全维。</text>
+    <text x="20" y="300">② attention 内部：dcp.all_gather(lse, dim=0) + Triton 修正 → 重算 partial out。</text>
+    <text x="20" y="320">③ attention 出口：dcp.reduce_scatter(out, dim=1) 回到 H/tp。</text>
+  </g>
+</svg>
+
+<!-- ========================================================== -->
+<h2 id="opt">6. 优化方向：TPA & 动态 CP</h2>
+
+<h3>6.1 TPA（Tensor-Parallel-size-Attention）<span class="tag code">RFC #34444</span></h3>
+
+<p>注意上面 DCP decode 那张图里，<strong>步骤 ②</strong> 的 <code>DCP all_gather(Q)</code> 是有点浪费的：我们花了一次通信，只是为了让每张卡都拿到 <code>H</code> 维的 Q。TPA 的思路是：</p>
+
+<ul>
+<li>不要在 <code>q_proj</code> 处按 <code>H/tp</code> 切；改成按 <code>H/(tp/dcp)</code> 切（也就是 <code>H·dcp/tp</code>）。</li>
+<li>这样一次 <code>q_proj</code> 之后，每张卡<strong>天然就有 <code>H·dcp/tp</code> 个 head 的 Q</strong>，DCP 组里的 4 张卡合起来正好是 <code>H</code>。</li>
+<li>省掉一次 attention 入口处的 all_gather。</li>
+</ul>
+
+<div class="twocol">
+<div>
+<h4>标准 TP + DCP 路径</h4>
+<pre>q_proj (slice by tp)
+  → Q (S, H/tp, D)
+  → <span style="color:#f97316;">DCP all_gather (dim=1)</span>     // 多一次通信
+  → Q_full (S, H, D)
+  → attention + cp_lse_ag_out_rs
+  → out (S, H/tp, D)
+  → o_proj (slice by tp)</pre>
+</div>
+<div>
+<h4>TPA 优化路径</h4>
+<pre>q_proj (slice by tp/dcp)
+  → Q (S, H*dcp/tp, D)             <span style="color:#16a34a;">// 直接到位</span>
+  → attention + cp_lse_ag_out_rs
+  → out (S, H/tp, D)
+  → o_proj (slice by tp)</pre>
+</div>
+</div>
+
+<h3>6.2 动态 CP（CrossDPScheduler）<span class="tag code">RFC #29295</span></h3>
+
+<p>CP 不开/开多大并不是「全局静态决定」的最优解：短请求开 CP 反而劣化，长请求才需要。动态 CP 在 scheduler 层做了一件事：把多个 DP replica 聚合成一个 Domain，按请求序列长度<strong>动态选择 CP size</strong>：</p>
+
+<ul>
+<li>短序列：CP=1，走标准 DP；</li>
+<li>长序列：从预建立的多个 CP 通信组里挑一个合适的 CP size 跑；</li>
+<li>长尾请求：可以从 CP=1 迁移到 CP&gt;1，避免单个 long tail 拖累整批。</li>
+</ul>
+
+<p>对应实现要点：<code>CrossDPKVCacheManager</code>（统一管理跨 DP block pool）、<code>list[SchedulerOutput]</code>（异构调度）、ModelRunner 把 CP 请求重排到 batch 最前，并按需用 2D CUDA Graph。</p>
+
+<!-- ========================================================== -->
+<h2 id="deploy">7. 部署经验数据</h2>
+
+<table>
+<thead><tr><th>开关</th><th>时延</th><th>吞吐</th><th>典型适用</th></tr></thead>
+<tbody>
+<tr><td>DCP</td>
+  <td>短序列因多通信略劣化；长序列（≥128K）TPOT 明显下降</td>
+  <td>KV 容量提升 → 并发数大涨，吞吐显著提升</td>
+  <td>1M+ 超长上下文、KV 紧张</td></tr>
+<tr><td>PCP</td>
+  <td>32K～256K 时优于 DP、略逊 TP</td>
+  <td>优于 TP、略逊 DP，是 DP 和 TP 之间的折中</td>
+  <td>并发接近系统极限时进一步压 TTFT</td></tr>
+<tr><td>DCP + PCP</td>
+  <td>叠加 PCP 后 TTFT 改善；DCP 保持 TPOT</td>
+  <td>仍享受 DCP 的 KV 扩容收益</td>
+  <td>同时关心 TTFT 和最大长度的场景</td></tr>
+</tbody>
+</table>
+
+<h3>当前适配进度（来自 CP-Viz slides，2026-05）</h3>
+
+<table>
+<thead><tr><th></th><th>Chunked Prefill</th><th>APC</th><th>MTP/Eagle</th><th>Piecewise Graph</th><th>Full Graph</th><th>PD 分离</th><th>Qwen3 (GQA)</th><th>DeepSeek (MLA)</th><th>Qwen3.5 (混合线性)</th></tr></thead>
+<tbody>
+<tr><td>vLLM DCP</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td><td>🚧</td><td>🚧</td><td>✅</td><td>✅</td><td>🚧</td></tr>
+<tr><td>vLLM Ascend DCP</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>vLLM PCP</td><td>🚧</td><td>🚧</td><td>❌</td><td>🚧</td><td>❌</td><td>🚧</td><td>🚧</td><td>🚧</td><td>❌</td></tr>
+<tr><td>vLLM Ascend PCP</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+</tbody>
+</table>
+
+<div class="footer-note">
+<strong>主要参考</strong>：CP-Viz 仓库 <code>docs/dcp_communication_patterns.md</code> &amp; <code>src/slides/*.html</code>；vLLM 源码：<code>vllm/distributed/parallel_state.py</code>、<code>vllm/v1/attention/backends/flash_attn.py:_forward_with_dcp</code>、<code>vllm/v1/attention/ops/common.py:cp_lse_ag_out_rs</code>、<code>vllm/v1/worker/gpu/block_table.py:_compute_slot_mappings_kernel</code>、<code>vllm/v1/attention/backends/utils.py:get_dcp_local_seq_lens</code>；PCP 切分细节：<code>vllm_ascend/worker/pcp_utils.py:PCPManager</code>。<br>
+对应 PR / RFC：DCP <a>vllm#23734</a>、PCP <a>vllm#25749</a>、TPA <a>vllm#34444</a>、动态 CP <a>vllm#29295</a>。
+</div>
+
+<script src="./nav.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Qwen3 模型结构图解 — vLLM 视角</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161922; --ink:#e6e8ee; --muted:#9aa0ad;
+    --acc1:#7aa2f7; --acc2:#bb9af7; --acc3:#9ece6a; --acc4:#f7768e; --acc5:#e0af68;
+    --grid:#262a35;
+  }
+  html,body{background:var(--bg); color:var(--ink); font-family:"Inter","Helvetica Neue",sans-serif; line-height:1.55;}
+  body{max-width:1100px; margin:0 auto; padding:32px 24px 96px;}
+  h1{font-size:34px; color:#fff; border-bottom:1px solid var(--grid); padding-bottom:14px;}
+  h2{margin-top:46px; font-size:24px; color:var(--acc1); border-left:4px solid var(--acc1); padding-left:10px;}
+  h3{margin-top:30px; font-size:18px; color:var(--acc2);}
+  h4{margin-top:22px; font-size:16px; color:var(--acc5);}
+  code,pre{font-family:"JetBrains Mono","Fira Code",monospace;}
+  code{background:#222632; padding:1px 6px; border-radius:4px; color:#c0caf5;}
+  pre{background:#0b0d12; border:1px solid var(--grid); border-radius:8px; padding:14px 18px; overflow-x:auto; color:#d6deeb;}
+  .panel{background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:18px 22px; margin:14px 0;}
+  .note{border-left:4px solid var(--acc3); background:#152018; padding:10px 16px; border-radius:6px; margin:14px 0;}
+  .warn{border-left:4px solid var(--acc4); background:#2a1620; padding:10px 16px; border-radius:6px; margin:14px 0;}
+  .grid2{display:grid; grid-template-columns: 1fr 1fr; gap:18px;}
+  table{width:100%; border-collapse:collapse; margin:8px 0;}
+  th,td{border:1px solid var(--grid); padding:6px 10px; text-align:left;}
+  th{background:#1c2030; color:var(--acc5);}
+  .kv{color:var(--acc5);} .qv{color:var(--acc1);} .vv{color:var(--acc3);} .hv{color:var(--acc2);}
+  .small{font-size:13px; color:var(--muted);}
+  .tag{display:inline-block; background:#222632; border:1px solid var(--grid); border-radius:4px; padding:1px 8px; margin:0 4px; font-size:13px; color:var(--acc2);}
+  svg{display:block; margin:16px auto;}
+  .legend{display:flex; gap:14px; flex-wrap:wrap; margin:6px 0 16px;}
+  .legend span{display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);}
+  .legend span::before{content:""; width:14px; height:14px; border-radius:3px; display:inline-block;}
+  .lg-q::before{background:#7aa2f7;} .lg-k::before{background:#bb9af7;} .lg-v::before{background:#9ece6a;}
+  .lg-g::before{background:#e0af68;} .lg-u::before{background:#f7768e;}
+  hr{border:none; border-top:1px dashed var(--grid); margin:36px 0;}
+  .formula{background:#0b0d12; border:1px solid var(--grid); border-radius:6px; padding:10px 14px; margin:10px 0; font-family:"Latin Modern Math","JetBrains Mono",serif; color:#c0caf5; overflow-x:auto;}
+</style>
+<link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+
+<h1>Qwen3 模型结构图解 — vLLM 视角</h1>
+<p class="small">配合源码: <code>vllm/model_executor/models/qwen3.py</code>、<code>qwen2.py</code>、<code>layers/linear.py</code>。
+读完后你应该能回答: ① Qwen3 一层 forward 里张量 shape 怎么变？ ② QKV/Row/Column Parallel 在几何上各切了哪个轴？ ③ <code>qkv.split([...], dim=-1)</code> 到底在干嘛？</p>
+
+<div class="panel">
+<b>本文使用的"具体数字"约定（以 Qwen3-8B 为例）：</b>
+<table>
+<tr><th>符号</th><th>含义</th><th>典型值</th></tr>
+<tr><td>H</td><td>hidden_size</td><td>4096</td></tr>
+<tr><td>n_h</td><td>num_attention_heads</td><td>32</td></tr>
+<tr><td>n_kv</td><td>num_key_value_heads (GQA)</td><td>8</td></tr>
+<tr><td>d</td><td>head_dim</td><td>128</td></tr>
+<tr><td>F</td><td>intermediate_size (FFN)</td><td>12288</td></tr>
+<tr><td>L</td><td>num_hidden_layers</td><td>36</td></tr>
+<tr><td>V</td><td>vocab_size</td><td>≈ 151936</td></tr>
+<tr><td>TP</td><td>tensor parallel size</td><td>用 2 来举例</td></tr>
+</table>
+<p class="small">注意 <b>n_h·d = 32·128 = 4096 = H</b>，而 <b>n_kv·d = 8·128 = 1024 ≠ H</b>。这就是 GQA：K/V 的"宽度"比 Q 窄 4 倍。</p>
+</div>
+
+<h2>0. 顶层骨架</h2>
+
+<p>整个模型像一个三明治：</p>
+
+<svg viewBox="0 0 900 280" width="100%" style="max-width:900px">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa0ad"/>
+    </marker>
+  </defs>
+  <!-- boxes -->
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20"  y="100" width="120" height="60" rx="8" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="80" y="125">input_ids</text>
+    <text x="80" y="145" fill="#9aa0ad">[B, S]</text>
+
+    <rect x="170" y="100" width="140" height="60" rx="8" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="240" y="125">embed_tokens</text>
+    <text x="240" y="145" fill="#9aa0ad">[B, S, H]</text>
+
+    <rect x="340" y="80" width="200" height="100" rx="8" fill="#152018" stroke="#9ece6a"/>
+    <text x="440" y="110">L × Qwen3DecoderLayer</text>
+    <text x="440" y="135" fill="#9aa0ad">[B, S, H] → [B, S, H]</text>
+    <text x="440" y="160" fill="#9ece6a">(本文重点)</text>
+
+    <rect x="570" y="100" width="120" height="60" rx="8" fill="#1c2030" stroke="#e0af68"/>
+    <text x="630" y="125">final RMSNorm</text>
+    <text x="630" y="145" fill="#9aa0ad">[B, S, H]</text>
+
+    <rect x="720" y="100" width="160" height="60" rx="8" fill="#1c2030" stroke="#f7768e"/>
+    <text x="800" y="125">lm_head (logits)</text>
+    <text x="800" y="145" fill="#9aa0ad">[B, S, V]</text>
+
+    <!-- arrows -->
+    <line x1="140" y1="130" x2="170" y2="130" stroke="#9aa0ad" marker-end="url(#arr)"/>
+    <line x1="310" y1="130" x2="340" y2="130" stroke="#9aa0ad" marker-end="url(#arr)"/>
+    <line x1="540" y1="130" x2="570" y2="130" stroke="#9aa0ad" marker-end="url(#arr)"/>
+    <line x1="690" y1="130" x2="720" y2="130" stroke="#9aa0ad" marker-end="url(#arr)"/>
+  </g>
+</svg>
+
+<p>对应代码（<code>Qwen3ForCausalLM</code>）：</p>
+<pre>self.model = Qwen3Model(...)       # embed + L 层 + final norm
+self.lm_head = ParallelLMHead(V, H) # 投影回词表 (或与 embed_tokens 权重共享)</pre>
+
+<p>真正复杂的是中间那个 <code>L × Qwen3DecoderLayer</code>。下面把它一层剖开。</p>
+
+<hr>
+
+<h2>1. 一个 DecoderLayer 的几何</h2>
+
+<p>对照 <code>Qwen3DecoderLayer.forward</code>，一个 token 进入一层时走的路：</p>
+
+<svg viewBox="0 0 880 540" width="100%" style="max-width:880px">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa0ad"/>
+    </marker>
+  </defs>
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <!-- input -->
+    <rect x="360" y="10" width="160" height="40" rx="6" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="440" y="35">x : [B, S, H]</text>
+
+    <!-- residual path on the right -->
+    <line x1="440" y1="50" x2="440" y2="80"  stroke="#9aa0ad" marker-end="url(#arr2)"/>
+    <line x1="440" y1="50" x2="780" y2="50"  stroke="#e0af68" stroke-dasharray="4,3"/>
+    <line x1="780" y1="50" x2="780" y2="240" stroke="#e0af68" stroke-dasharray="4,3"/>
+
+    <rect x="360" y="80" width="160" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="440" y="105">input_layernorm (RMSNorm)</text>
+
+    <line x1="440" y1="120" x2="440" y2="150" stroke="#9aa0ad" marker-end="url(#arr2)"/>
+
+    <rect x="240" y="150" width="400" height="80" rx="6" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="440" y="180">Self-Attention   (qkv_proj → split → q/k-norm</text>
+    <text x="440" y="200">→ RoPE → attn → o_proj)</text>
+    <text x="440" y="220" fill="#9aa0ad">[B,S,H] → [B,S,H]</text>
+
+    <line x1="440" y1="230" x2="440" y2="260" stroke="#9aa0ad" marker-end="url(#arr2)"/>
+
+    <!-- residual add 1 -->
+    <circle cx="440" cy="270" r="14" fill="#1c2030" stroke="#e0af68"/>
+    <text x="440" y="275" fill="#e0af68">+</text>
+    <line x1="780" y1="270" x2="455" y2="270" stroke="#e0af68" stroke-dasharray="4,3" marker-end="url(#arr2)"/>
+
+    <line x1="440" y1="285" x2="440" y2="310" stroke="#9aa0ad" marker-end="url(#arr2)"/>
+    <!-- second residual save -->
+    <line x1="440" y1="285" x2="780" y2="285" stroke="#e0af68" stroke-dasharray="4,3"/>
+    <line x1="780" y1="285" x2="780" y2="450" stroke="#e0af68" stroke-dasharray="4,3"/>
+
+    <rect x="320" y="310" width="240" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="440" y="335">post_attention_layernorm (RMSNorm)</text>
+
+    <line x1="440" y1="350" x2="440" y2="380" stroke="#9aa0ad" marker-end="url(#arr2)"/>
+
+    <rect x="280" y="380" width="320" height="80" rx="6" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="440" y="410">MLP   (gate_up_proj → SiLU·gate → down_proj)</text>
+    <text x="440" y="430" fill="#9aa0ad">[B,S,H] → [B,S,F] → [B,S,H]</text>
+
+    <line x1="440" y1="460" x2="440" y2="485" stroke="#9aa0ad" marker-end="url(#arr2)"/>
+
+    <circle cx="440" cy="495" r="14" fill="#1c2030" stroke="#e0af68"/>
+    <text x="440" y="500" fill="#e0af68">+</text>
+    <line x1="780" y1="495" x2="455" y2="495" stroke="#e0af68" stroke-dasharray="4,3" marker-end="url(#arr2)"/>
+
+    <line x1="440" y1="510" x2="440" y2="530" stroke="#9aa0ad" marker-end="url(#arr2)"/>
+    <text x="440" y="540" fill="#7aa2f7">下一层的输入 [B, S, H]</text>
+  </g>
+</svg>
+
+<p>两条<span style="color:var(--acc5)">虚线橙色</span>就是<b>残差</b>（residual）。vLLM 在 <code>RMSNorm</code> 里做了一个小技巧：把"上一层的残差 + 当前归一化"<b>融合</b>成一次调用：</p>
+<pre>hidden_states, residual = self.input_layernorm(hidden_states, residual)
+# 等价于:
+#   hidden_states = hidden_states + residual         (上一层延迟的 add)
+#   residual      = hidden_states                    (准备好新的残差)
+#   hidden_states = rmsnorm(hidden_states)</pre>
+
+<div class="note">所以 <code>forward</code> 末尾返回的 <code>(hidden_states, residual)</code> 并不是普通残差和——它是"还没相加"的状态，下一层入口才合并。这是优化算子能省一次显存往返。</div>
+
+<hr>
+
+<h2>2. Self-Attention 内部的 8 个 shape 转换</h2>
+
+<p>这是 <code>Qwen3Attention.forward</code> 的全部 8 行代码（剥掉条件分支）：</p>
+
+<pre>qkv, _ = self.qkv_proj(hidden_states)                          # ①
+q, k, v = qkv.split([q_size, kv_size, kv_size], dim=-1)         # ②
+q_by_head = q.view(*q.shape[:-1], -1, head_dim)                 # ③ q-norm reshape
+q = self.q_norm(q_by_head).view(q.shape)                        # ④ q-norm + 还原
+k_by_head = k.view(*k.shape[:-1], -1, head_dim)                 # ③' k-norm reshape
+k = self.k_norm(k_by_head).view(k.shape)                        # ④' k-norm + 还原
+q, k = self.rotary_emb(positions, q, k)                         # ⑤ RoPE
+attn_output = self.attn(q, k, v)                                # ⑥ flash/paged attention
+output, _ = self.o_proj(attn_output)                            # ⑦
+return output                                                   # ⑧</pre>
+
+<p>下面逐步把每个 shape 画出来（先假设 <b>TP=1</b>，纯单卡）：</p>
+
+<h3>① qkv_proj : <code>[B, S, H]</code> → <code>[B, S, q_size + kv_size + kv_size]</code></h3>
+
+<p>"为什么不分三个 Linear 而是合一起？" —— GEMM 越大越快、kernel launch 越少。所以 vLLM 把 Q、K、V 三个权重<b>沿输出维度 concat</b>在一起，存成一个矩阵 <code>W_qkv</code>：</p>
+
+<div class="legend">
+  <span class="lg-q">Q-part</span>
+  <span class="lg-k">K-part</span>
+  <span class="lg-v">V-part</span>
+</div>
+
+<svg viewBox="0 0 760 240" width="100%" style="max-width:760px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <!-- x -->
+    <rect x="20" y="80" width="120" height="80" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="80" y="50">hidden_states</text>
+    <text x="80" y="125">[B·S, H]</text>
+
+    <!-- W -->
+    <rect x="180" y="40" width="160" height="160" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="260" y="30">W_qkv  (H × out)</text>
+
+    <!-- W split (vertically: rows=H, cols=out) -->
+    <rect x="180" y="40" width="80"  height="160" fill="#7aa2f7" opacity="0.5"/>
+    <rect x="260" y="40" width="40"  height="160" fill="#bb9af7" opacity="0.5"/>
+    <rect x="300" y="40" width="40"  height="160" fill="#9ece6a" opacity="0.5"/>
+    <text x="220" y="125">Q</text>
+    <text x="280" y="125">K</text>
+    <text x="320" y="125">V</text>
+
+    <text x="220" y="220" fill="#9aa0ad">q_size</text>
+    <text x="280" y="220" fill="#9aa0ad">kv_size</text>
+    <text x="320" y="220" fill="#9aa0ad">kv_size</text>
+
+    <!-- = -->
+    <text x="380" y="125" font-size="20">=</text>
+
+    <!-- result -->
+    <rect x="420" y="80" width="320" height="80" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="420" y="80" width="160" height="80" fill="#7aa2f7" opacity="0.5"/>
+    <rect x="580" y="80" width="80"  height="80" fill="#bb9af7" opacity="0.5"/>
+    <rect x="660" y="80" width="80"  height="80" fill="#9ece6a" opacity="0.5"/>
+    <text x="500" y="125">Q</text>
+    <text x="620" y="125">K</text>
+    <text x="700" y="125">V</text>
+    <text x="580" y="50">qkv</text>
+    <text x="580" y="195">[B·S, q_size + kv_size + kv_size]</text>
+  </g>
+</svg>
+
+<p>具体宽度（TP=1，Qwen3-8B）：</p>
+<ul>
+<li><span class="qv">q_size = n_h · d = 32·128 = <b>4096</b></span></li>
+<li><span class="kv">kv_size = n_kv · d = 8·128 = <b>1024</b></span></li>
+<li>合起来输出宽度 = 4096 + 1024 + 1024 = <b>6144</b></li>
+</ul>
+
+<h3>② <code>qkv.split([q_size, kv_size, kv_size], dim=-1)</code></h3>
+
+<div class="panel">
+<b><code>Tensor.split(sizes, dim)</code> 语法解释：</b>
+<ul>
+<li>第一个参数如果是 <b>list / tuple</b>，表示"按这些长度依次切片"，长度和必须等于该维度的大小；</li>
+<li>第一个参数如果是 <b>int</b>，表示"每段长度都是这个 int"；</li>
+<li>返回一个 tuple，元素数 = 切片数；</li>
+<li>这是 <b>view 操作</b>，不复制内存——只是建了 3 个指向原 buffer 不同 offset 的视图。</li>
+</ul>
+</div>
+
+<p>所以这一行做的事，就是把上面那条 <code>[B,S,6144]</code> 的拼接张量"按 [4096, 1024, 1024]"切回 3 段：</p>
+
+<svg viewBox="0 0 760 130" width="100%" style="max-width:760px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20" y="40" width="320" height="50" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="20" y="40" width="160" height="50" fill="#7aa2f7" opacity="0.5"/>
+    <rect x="180" y="40" width="80"  height="50" fill="#bb9af7" opacity="0.5"/>
+    <rect x="260" y="40" width="80"  height="50" fill="#9ece6a" opacity="0.5"/>
+    <text x="180" y="25">qkv  [B, S, 6144]</text>
+    <text x="100" y="70">4096</text><text x="220" y="70">1024</text><text x="300" y="70">1024</text>
+
+    <text x="380" y="65" font-size="18">→</text>
+
+    <rect x="420" y="20" width="120" height="40" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="420" y="20" width="120" height="40" fill="#7aa2f7" opacity="0.5"/>
+    <text x="480" y="45">q  [B,S,4096]</text>
+
+    <rect x="560" y="20" width="80"  height="40" fill="#1c2030" stroke="#bb9af7"/>
+    <rect x="560" y="20" width="80"  height="40" fill="#bb9af7" opacity="0.5"/>
+    <text x="600" y="45">k  [B,S,1024]</text>
+
+    <rect x="660" y="20" width="80"  height="40" fill="#1c2030" stroke="#9ece6a"/>
+    <rect x="660" y="20" width="80"  height="40" fill="#9ece6a" opacity="0.5"/>
+    <text x="700" y="45">v  [B,S,1024]</text>
+  </g>
+</svg>
+
+<h3>③④ q-norm / k-norm：reshape 出"头"这个维度</h3>
+
+<p>Qwen3 的一个新东西：对 <b>Q 和 K 在每个 head 内部单独做一次 RMSNorm</b>（QK-Norm）。RMSNorm 是沿最后一维做的，所以我们必须先把"flat 的 q"reshape 成"按 head 切开"：</p>
+
+<div class="formula">q : [B, S, n_h·d]  ─view→  q_by_head : [B, S, n_h, d]</div>
+
+<svg viewBox="0 0 700 170" width="100%" style="max-width:700px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20" y="60" width="280" height="40" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/>
+    <text x="160" y="45">q  [B, S, 4096]</text>
+    <g stroke="#0f1115">
+      <line x1="55"  y1="60" x2="55"  y2="100"/>
+      <line x1="90"  y1="60" x2="90"  y2="100"/>
+      <line x1="125" y1="60" x2="125" y2="100"/>
+      <line x1="160" y1="60" x2="160" y2="100"/>
+      <line x1="195" y1="60" x2="195" y2="100"/>
+      <line x1="230" y1="60" x2="230" y2="100"/>
+      <line x1="265" y1="60" x2="265" y2="100"/>
+    </g>
+    <text x="160" y="120" fill="#9aa0ad">连续内存里 32 个 head 紧挨着，每个 d=128</text>
+
+    <text x="340" y="85" font-size="18">view →</text>
+
+    <rect x="400" y="30" width="280" height="100" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/>
+    <text x="540" y="20">q_by_head  [B, S, 32, 128]</text>
+    <g stroke="#0f1115">
+      <line x1="435" y1="30" x2="435" y2="130"/>
+      <line x1="470" y1="30" x2="470" y2="130"/>
+      <line x1="505" y1="30" x2="505" y2="130"/>
+      <line x1="540" y1="30" x2="540" y2="130"/>
+      <line x1="575" y1="30" x2="575" y2="130"/>
+      <line x1="610" y1="30" x2="610" y2="130"/>
+      <line x1="645" y1="30" x2="645" y2="130"/>
+    </g>
+    <text x="540" y="155" fill="#9aa0ad">"头"被显式标出来；norm 沿最后一维独立作用</text>
+  </g>
+</svg>
+
+<p>所以代码中：</p>
+<pre>q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
+# -1 写法等价 → q.view(B, S, n_h_local, d)</pre>
+<p>之后 <code>self.q_norm</code> 在最后一维 <code>d</code> 上做 RMS，再 view 回 <code>[B, S, n_h·d]</code>。</p>
+
+<h3>⑤ RoPE — 旋转位置编码</h3>
+<p>对 Q/K 的每个 head 中相邻 2 个维度做"按 position 转一定角度"的旋转。它<b>不改变 shape</b>，只是在 q、k 上原地修改数值，让点积自带相对位置信息。V 不参与。</p>
+
+<h3>⑥ self.attn(q, k, v) — vLLM 的 PagedAttention</h3>
+<p>这一步内部含义就是经典的：</p>
+<div class="formula">attn = softmax( Q · Kᵀ / √d ) · V</div>
+<p>但在 vLLM 里：K、V 不是当前 batch 自己的，而是<b>从 KV cache 里取</b>（含历史 token）。最后输出形状还是 <code>[B, S, n_h·d] = [B, S, H]</code>。</p>
+
+<h3>⑦ o_proj — 把 attention 输出投回 H 维</h3>
+<div class="formula">attn_output [B,S,H]  ·  W_o [H, H]  →  output [B,S,H]</div>
+<p><code>o_proj</code> 是 <code>RowParallelLinear</code>，原因下面 §4 解释。</p>
+
+<hr>
+
+<h2>3. MLP（SwiGLU）</h2>
+
+<p>Qwen3 用的是 <b>SwiGLU</b>：</p>
+<div class="formula">MLP(x) = ( SiLU(x · W_gate) ⊙ (x · W_up) ) · W_down</div>
+
+<p>vLLM 把 <code>W_gate</code> 和 <code>W_up</code> 合并成一个 <code>gate_up_proj</code>（与 QKV 同样思路：合并 GEMM）：</p>
+
+<div class="legend">
+  <span class="lg-g">gate</span>
+  <span class="lg-u">up</span>
+</div>
+
+<svg viewBox="0 0 820 240" width="100%" style="max-width:820px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20" y="80" width="100" height="80" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="70" y="50">x</text>
+    <text x="70" y="125">[B·S, H]</text>
+
+    <!-- W_gate_up -->
+    <rect x="160" y="40" width="140" height="160" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="160" y="40" width="70"  height="160" fill="#e0af68" opacity="0.55"/>
+    <rect x="230" y="40" width="70"  height="160" fill="#f7768e" opacity="0.55"/>
+    <text x="195" y="125">gate</text>
+    <text x="265" y="125">up</text>
+    <text x="230" y="30">W_gate_up : [H, 2F]</text>
+
+    <text x="340" y="125" font-size="18">→</text>
+
+    <rect x="380" y="80" width="240" height="80" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="380" y="80" width="120" height="80" fill="#e0af68" opacity="0.55"/>
+    <rect x="500" y="80" width="120" height="80" fill="#f7768e" opacity="0.55"/>
+    <text x="500" y="50">gate_up : [B·S, 2F]</text>
+    <text x="440" y="180" fill="#9aa0ad">F</text>
+    <text x="560" y="180" fill="#9aa0ad">F</text>
+
+    <text x="640" y="125" font-size="18">→</text>
+
+    <rect x="680" y="80" width="120" height="80" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="740" y="50">SiluAndMul</text>
+    <text x="740" y="125">[B·S, F]</text>
+  </g>
+</svg>
+
+<p><code>SiluAndMul</code> 是 vLLM 的融合算子，等价于：</p>
+<pre>gate, up = gate_up.chunk(2, dim=-1)   # 概念上
+y = silu(gate) * up                   # 逐元素</pre>
+
+<p>之后 <code>down_proj</code>（<code>RowParallelLinear</code>）把 <code>F</code> 维投回 <code>H</code>：</p>
+<div class="formula">y [B,S,F] · W_down [F, H] → out [B,S,H]</div>
+
+<hr>
+
+<h2>4. Tensor Parallel：三种切法的几何</h2>
+
+<p>这是你最想搞清楚的部分。先记两条主线：</p>
+<div class="panel">
+<b>Column Parallel</b>: 把权重<b>按"输出维度"切</b>，每张 GPU 负责一段输出列；输入<b>复制</b>到每张卡；输出在卡之间是<b>拼接</b>关系。<br>
+<b>Row Parallel</b>: 把权重<b>按"输入维度"切</b>，每张 GPU 负责一段输入行；输入<b>已经被切过</b>；输出在卡之间是<b>逐元素求和</b>关系（需要 all-reduce）。
+</div>
+
+<h3>4.1 Column Parallel（=QKVParallelLinear, MergedColumnParallelLinear）</h3>
+
+<p>数学上 <code>y = x · W</code>，把 <code>W</code> 横向劈成 <code>W = [W₁ | W₂]</code>，则：</p>
+<div class="formula">x · [W₁ | W₂] = [x·W₁ | x·W₂]</div>
+
+<p>所以两张 GPU 各自算 <code>y_i = x · W_i</code>，<b>不需要任何通信</b>就拿到了"输出的一段"。</p>
+
+<svg viewBox="0 0 800 270" width="100%" style="max-width:800px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <text x="400" y="20" fill="#9aa0ad">Column Parallel (TP=2)</text>
+
+    <!-- GPU0 -->
+    <text x="120" y="50" fill="#7aa2f7">GPU 0</text>
+    <rect x="20" y="70" width="100" height="60" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="70" y="105">x (full)</text>
+    <rect x="140" y="60" width="60" height="80" fill="#7aa2f7" opacity="0.55"/>
+    <text x="170" y="105">W₁</text>
+    <text x="220" y="105" font-size="16">=</text>
+    <rect x="240" y="70" width="60" height="60" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="240" y="70" width="60" height="60" fill="#7aa2f7" opacity="0.55"/>
+    <text x="270" y="105">y₁</text>
+
+    <!-- GPU1 -->
+    <text x="120" y="170" fill="#bb9af7">GPU 1</text>
+    <rect x="20" y="190" width="100" height="60" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="70" y="225">x (full)</text>
+    <rect x="140" y="180" width="60" height="80" fill="#bb9af7" opacity="0.55"/>
+    <text x="170" y="225">W₂</text>
+    <text x="220" y="225" font-size="16">=</text>
+    <rect x="240" y="190" width="60" height="60" fill="#1c2030" stroke="#bb9af7"/>
+    <rect x="240" y="190" width="60" height="60" fill="#bb9af7" opacity="0.55"/>
+    <text x="270" y="225">y₂</text>
+
+    <!-- arrow to combined -->
+    <line x1="320" y1="100" x2="420" y2="160" stroke="#9aa0ad"/>
+    <line x1="320" y1="220" x2="420" y2="160" stroke="#9aa0ad"/>
+    <text x="380" y="135" fill="#9aa0ad">(本地)</text>
+
+    <rect x="440" y="120" width="180" height="80" fill="#1c2030" stroke="#9ece6a"/>
+    <rect x="440" y="120" width="90" height="80" fill="#7aa2f7" opacity="0.55"/>
+    <rect x="530" y="120" width="90" height="80" fill="#bb9af7" opacity="0.55"/>
+    <text x="530" y="105">y = [y₁ | y₂]</text>
+    <text x="530" y="160" font-size="11" fill="#e6e8ee">y₁</text>
+    <text x="585" y="160" font-size="11" fill="#e6e8ee">y₂</text>
+
+    <text x="650" y="160" font-size="16">→</text>
+    <rect x="670" y="125" width="120" height="70" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="730" y="155">下一层用</text>
+    <text x="730" y="175" fill="#9aa0ad">通常无需聚合</text>
+  </g>
+</svg>
+
+<h4>QKVParallelLinear 的"沿 head 切"是什么意思？</h4>
+
+<p><code>QKVParallelLinear</code> 在<b>逻辑上</b>是 Column Parallel，但它<b>按 head 数</b>来切而不是按 q_size 的元素数。为什么？因为每个 head 是一个独立的 attention 计算单元，你不能把同一个 head 的 d 维切到两张卡上——那样 softmax 都做不了。</p>
+
+<p>看代码（<code>linear.py</code> 中 <code>QKVParallelLinear.__init__</code>）：</p>
+<pre>self.num_heads    = total_num_heads    // tp_size   # Q 头数 / 卡
+self.num_kv_heads = max(1, total_num_kv_heads // tp_size)
+# Q 的 output 宽度 / 卡 = num_heads * head_size
+# K 的 output 宽度 / 卡 = num_kv_heads * head_size
+# V 的 output 宽度 / 卡 = num_kv_heads * v_head_size</pre>
+
+<p>以 Qwen3-8B + TP=2 为例：</p>
+
+<table>
+<tr><th></th><th>TP=1</th><th>TP=2 / 单卡</th></tr>
+<tr><td>Q heads</td><td>32</td><td>16</td></tr>
+<tr><td>KV heads</td><td>8</td><td>4</td></tr>
+<tr><td>q_size (单卡)</td><td>4096</td><td>2048</td></tr>
+<tr><td>kv_size (单卡)</td><td>1024</td><td>512</td></tr>
+<tr><td>qkv 输出宽度 (单卡)</td><td>6144</td><td>3072</td></tr>
+</table>
+
+<p>所以每张卡的 <code>qkv_proj</code> 物理上输出 <code>[B,S,3072]</code>，分别切成 <code>q[B,S,2048] / k[B,S,512] / v[B,S,512]</code>，<b>用同一行 split 代码</b>，因为里面引用的 <code>self.q_size</code>/<code>self.kv_size</code> 是"已经按 TP 切过的本地大小"。</p>
+
+<div class="note">几何直观：32 个 Q 头被横着掰成两半，每张卡拿 16 个头独立算 attention。Attention 输出也只有 16 个头的宽度。直到 <code>o_proj</code> 才把"分散到各卡上的头"合并回完整的 H 维表示——这就是为什么 <code>o_proj</code> 是 <b>Row Parallel</b>。</div>
+
+<h4>n_kv &lt; tp_size 的特殊情况：KV 头被<b>复制</b></h4>
+
+<p>例如 <code>n_kv=8</code>，<code>TP=16</code>。这时 <code>num_kv_heads = max(1, 8//16) = 1</code>，<code>num_kv_head_replicas = 16/8 = 2</code>：每个 KV head 被 2 张卡共享拷贝一份。Q 头总数仍是 <code>n_h // tp</code> 切下去。</p>
+
+<h3>4.2 Row Parallel（=RowParallelLinear, o_proj, down_proj）</h3>
+
+<p>数学上把 <code>W</code> 纵向劈成两段：</p>
+
+<div class="formula">x · W = [x₁ | x₂] · [ W₁ <br>                     W₂ ]  = x₁·W₁ + x₂·W₂</div>
+
+<p>即把<b>输入按通道切两半</b>，每张卡做一个"窄"的 GEMM，最后用 <b>all-reduce 加起来</b>。</p>
+
+<svg viewBox="0 0 800 280" width="100%" style="max-width:800px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <text x="400" y="20" fill="#9aa0ad">Row Parallel (TP=2)</text>
+
+    <!-- GPU0 -->
+    <text x="120" y="50" fill="#7aa2f7">GPU 0</text>
+    <rect x="20" y="70" width="60" height="60" fill="#1c2030" stroke="#7aa2f7"/>
+    <rect x="20" y="70" width="60" height="60" fill="#7aa2f7" opacity="0.55"/>
+    <text x="50" y="105">x₁</text>
+    <rect x="100" y="60" width="60" height="80" fill="#7aa2f7" opacity="0.55"/>
+    <text x="130" y="105">W₁</text>
+    <text x="180" y="105" font-size="16">=</text>
+    <rect x="200" y="70" width="80" height="60" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="240" y="105">partial y</text>
+
+    <!-- GPU1 -->
+    <text x="120" y="170" fill="#bb9af7">GPU 1</text>
+    <rect x="20" y="190" width="60" height="60" fill="#1c2030" stroke="#bb9af7"/>
+    <rect x="20" y="190" width="60" height="60" fill="#bb9af7" opacity="0.55"/>
+    <text x="50" y="225">x₂</text>
+    <rect x="100" y="180" width="60" height="80" fill="#bb9af7" opacity="0.55"/>
+    <text x="130" y="225">W₂</text>
+    <text x="180" y="225" font-size="16">=</text>
+    <rect x="200" y="190" width="80" height="60" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="240" y="225">partial y</text>
+
+    <!-- all-reduce -->
+    <line x1="290" y1="100" x2="420" y2="160" stroke="#f7768e" stroke-dasharray="4,3"/>
+    <line x1="290" y1="220" x2="420" y2="160" stroke="#f7768e" stroke-dasharray="4,3"/>
+    <text x="380" y="135" fill="#f7768e">all-reduce (SUM)</text>
+
+    <rect x="440" y="125" width="160" height="70" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="520" y="160">y (完整)</text>
+    <text x="520" y="180" fill="#9aa0ad">在两张卡上一致</text>
+
+    <text x="620" y="160" font-size="16">→</text>
+    <rect x="640" y="125" width="140" height="70" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="710" y="160">下一层使用</text>
+  </g>
+</svg>
+
+<p>vLLM 实现里这步通信由 <code>tensor_model_parallel_all_reduce(output_parallel)</code> 完成（<code>RowParallelLinear.forward</code> 里）。</p>
+
+<h3>4.3 Column → Row 的"夹心结构"</h3>
+
+<p>vLLM 故意让每个块（Attention、MLP）都是 <b>Column → Row</b> 这种"夹心三明治"：</p>
+
+<svg viewBox="0 0 850 220" width="100%" style="max-width:850px">
+  <g font-family="JetBrains Mono" font-size="13" fill="#e6e8ee" text-anchor="middle">
+    <!-- Attention -->
+    <rect x="20"  y="50" width="120" height="60" fill="#1c2030" stroke="#9aa0ad"/>
+    <text x="80" y="80">x  [B,S,H]</text>
+    <text x="80" y="100" fill="#9aa0ad">(完整, 各卡一致)</text>
+
+    <line x1="140" y1="80" x2="180" y2="80" stroke="#9aa0ad" marker-end="url(#arr)"/>
+
+    <rect x="180" y="40" width="160" height="80" fill="#152018" stroke="#7aa2f7"/>
+    <text x="260" y="68">qkv_proj  (Col)</text>
+    <text x="260" y="88" fill="#9aa0ad">输出按 head 切</text>
+    <text x="260" y="108" fill="#9aa0ad">[B,S, 3072]/卡</text>
+
+    <line x1="340" y1="80" x2="380" y2="80" stroke="#9aa0ad" marker-end="url(#arr)"/>
+
+    <rect x="380" y="40" width="160" height="80" fill="#152018" stroke="#bb9af7"/>
+    <text x="460" y="68">attention 计算</text>
+    <text x="460" y="88" fill="#9aa0ad">每卡管自己的</text>
+    <text x="460" y="108" fill="#9aa0ad">16 头 = 2048</text>
+
+    <line x1="540" y1="80" x2="580" y2="80" stroke="#9aa0ad" marker-end="url(#arr)"/>
+
+    <rect x="580" y="40" width="160" height="80" fill="#152018" stroke="#f7768e"/>
+    <text x="660" y="68">o_proj  (Row)</text>
+    <text x="660" y="88" fill="#9aa0ad">+ all-reduce</text>
+    <text x="660" y="108" fill="#9aa0ad">→ [B,S,H] 完整</text>
+
+    <line x1="740" y1="80" x2="780" y2="80" stroke="#9aa0ad" marker-end="url(#arr)"/>
+    <text x="800" y="84">out</text>
+
+    <!-- legend bar -->
+    <text x="80" y="170" fill="#e0af68">关键观察：</text>
+    <text x="80" y="190" fill="#9aa0ad" text-anchor="start">"在并行段内部不通信，只在出口做一次 all-reduce"</text>
+  </g>
+</svg>
+
+<p>MLP 是一样的套路：</p>
+<pre>x (完整) ─Col→ gate_up_proj ─→ [B,S, 2F]/卡 ─→ SiluAndMul ─→ [B,S, F]/卡 ─Row→ down_proj + all-reduce ─→ x (完整)</pre>
+
+<div class="note">每一层 forward 中 <b>只有 2 次 all-reduce</b>（attention 出口一次、MLP 出口一次），这是 Megatron-LM 经典张量并行设计。整个 L 层模型一共 2L 次跨卡通信。</div>
+
+<hr>
+
+<h2>5. 把所有 shape 串起来（TP=2 的版本）</h2>
+
+<table>
+<tr><th>步骤</th><th>张量</th><th>shape</th><th>注释</th></tr>
+<tr><td>0</td><td>input_ids</td><td>[B, S]</td><td>每卡完整 token id</td></tr>
+<tr><td>1</td><td>hidden_states</td><td>[B, S, 4096]</td><td>vocab_parallel_embedding 内部 all-reduce 后</td></tr>
+<tr><td>2</td><td>input_layernorm out</td><td>[B, S, 4096]</td><td>RMSNorm 不切</td></tr>
+<tr><td>3</td><td>qkv_proj out</td><td>[B, S, 3072]</td><td>每卡 16 Q + 4 K + 4 V 个头</td></tr>
+<tr><td>4</td><td>q / k / v</td><td>[B,S,2048] / [B,S,512] / [B,S,512]</td><td>split</td></tr>
+<tr><td>5</td><td>q_by_head</td><td>[B, S, 16, 128]</td><td>view 出 head 维</td></tr>
+<tr><td>6</td><td>q_norm / k_norm</td><td>同上</td><td>沿 d 做 RMSNorm</td></tr>
+<tr><td>7</td><td>RoPE</td><td>同上 (view 回 2048)</td><td>原地旋转</td></tr>
+<tr><td>8</td><td>attn_output</td><td>[B, S, 2048]</td><td>本卡 16 头 attention 结果</td></tr>
+<tr><td>9</td><td>o_proj out</td><td>[B, S, 4096]</td><td>Row Parallel + all-reduce → 完整</td></tr>
+<tr><td>10</td><td>+ residual</td><td>[B, S, 4096]</td><td></td></tr>
+<tr><td>11</td><td>post_norm out</td><td>[B, S, 4096]</td><td></td></tr>
+<tr><td>12</td><td>gate_up_proj out</td><td>[B, S, 12288]</td><td>每卡 F=6144 gate + 6144 up</td></tr>
+<tr><td>13</td><td>SiluAndMul</td><td>[B, S, 6144]</td><td>逐元素</td></tr>
+<tr><td>14</td><td>down_proj out</td><td>[B, S, 4096]</td><td>Row Parallel + all-reduce</td></tr>
+<tr><td>15</td><td>+ residual</td><td>[B, S, 4096]</td><td>→ 下一层</td></tr>
+</table>
+
+<hr>
+
+<h2>6. 收尾：lm_head 与采样</h2>
+
+<p>L 层都跑完后：</p>
+<pre>final_norm  → [B, S, H]
+lm_head     → [B, S, V]      # ParallelLMHead，沿 V 切分
+logits_proc → 采样 / top-k / top-p</pre>
+<p><code>ParallelLMHead</code> 也是 column parallel（按 vocab 维切），最后聚合或者直接交给 sampler 各卡分别采各自的"vocab 子段"。</p>
+
+<hr>
+
+<h2>7. 一句话总结</h2>
+
+<div class="panel">
+<ol>
+<li><b>QKVParallelLinear</b> = Column Parallel + 按 head 切，把 3 个矩阵合一个 GEMM。</li>
+<li><b><code>qkv.split([q,kv,kv], -1)</code></b> = 零拷贝的视图切分，把那个合并 GEMM 的结果拆回 Q/K/V。</li>
+<li><b>RowParallelLinear</b> = 按输入维度切的 GEMM，结尾<b>必须做 all-reduce</b>。</li>
+<li>每个块都是"Col 进 → 本地计算 → Row 出"夹心，全模型每层只 2 次 all-reduce。</li>
+<li>残差在 vLLM 里被 RMSNorm 算子吃进去做 fusion，所以你看到 <code>(hidden_states, residual)</code> 这种成对返回。</li>
+</ol>
+</div>
+
+<p class="small">读到这里再回去看 <code>qwen3.py</code>，你应该觉得每一行都明明白白了。</p>
+
+<script src="./nav.js" defer></script>
+</body>
+</html>

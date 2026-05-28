@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>vLLM V1 GPUModelRunner 详解 — 以 Qwen3 为例</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161922; --ink:#e6e8ee; --muted:#9aa0ad;
+    --acc1:#7aa2f7; --acc2:#bb9af7; --acc3:#9ece6a; --acc4:#f7768e; --acc5:#e0af68;
+    --grid:#262a35;
+  }
+  html,body{background:var(--bg); color:var(--ink); font-family:"Inter","Helvetica Neue",sans-serif; line-height:1.55;}
+  body{max-width:1180px; margin:0 auto; padding:32px 24px 96px;}
+  h1{font-size:32px; color:#fff; border-bottom:1px solid var(--grid); padding-bottom:14px;}
+  h2{margin-top:42px; font-size:22px; color:var(--acc1); border-left:4px solid var(--acc1); padding-left:10px;}
+  h3{margin-top:26px; font-size:17px; color:var(--acc2);}
+  h4{margin-top:20px; font-size:15px; color:var(--acc5);}
+  code,pre{font-family:"JetBrains Mono","Fira Code",monospace;}
+  code{background:#222632; padding:1px 6px; border-radius:4px; color:#c0caf5; font-size:13px;}
+  pre{background:#0b0d12; border:1px solid var(--grid); border-radius:8px; padding:14px 18px; overflow-x:auto; color:#d6deeb; font-size:12.5px; line-height:1.45;}
+  .panel{background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:14px 18px; margin:14px 0;}
+  .note{border-left:4px solid var(--acc3); background:#152018; padding:10px 16px; border-radius:6px; margin:14px 0;}
+  .warn{border-left:4px solid var(--acc4); background:#2a1620; padding:10px 16px; border-radius:6px; margin:14px 0;}
+  .key{border-left:4px solid var(--acc5); background:#1d1810; padding:10px 16px; border-radius:6px; margin:14px 0;}
+  table{width:100%; border-collapse:collapse; margin:8px 0; font-size:12.5px;}
+  th,td{border:1px solid var(--grid); padding:5px 9px; text-align:left; vertical-align:top;}
+  th{background:#1c2030; color:var(--acc5);}
+  td code{font-size:12px;}
+  .small{font-size:13px; color:var(--muted);}
+  svg{display:block; margin:14px auto;}
+  hr{border:none; border-top:1px dashed var(--grid); margin:30px 0;}
+  .ref{color:var(--muted); font-size:11.5px; font-family:"JetBrains Mono",monospace;}
+  .pill{display:inline-block; padding:1px 7px; border-radius:10px; font-size:11.5px; margin-right:4px; font-family:"JetBrains Mono",monospace;}
+  .pill-r{background:#2a1620; color:#f7768e;} .pill-g{background:#152018; color:#9ece6a;}
+  .pill-b{background:#0f1c2a; color:#7aa2f7;} .pill-p{background:#1f152a; color:#bb9af7;}
+  .pill-y{background:#2a2310; color:#e0af68;}
+  .toc{background:var(--panel); border:1px solid var(--grid); border-radius:10px; padding:12px 22px; margin:14px 0;}
+  .toc ol{margin:6px 0; padding-left:22px;}
+  .toc a{color:var(--acc1); text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+  .cap{text-align:center; font-size:12px; color:var(--muted); margin-top:-8px;}
+</style>
+<link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+
+<h1>vLLM V1 GPUModelRunner 详解 — 以 Qwen3 为例</h1>
+<p class="small">本文每个结论都给出 <code>文件:行号</code>，并大量贴出真实代码。读完应能逐行解释 <code>execute_model</code>。</p>
+
+<div class="toc">
+<b>目录：</b>
+<ol>
+<li><a href="#sec0">全景图：ModelRunner 在 vLLM 中的位置</a></li>
+<li><a href="#sec1">__init__：runner 持有的所有状态</a></li>
+<li><a href="#sec2">load_model：模型怎么进 GPU</a></li>
+<li><a href="#sec3">initialize_kv_cache：分页 KV 池的几何</a></li>
+<li><a href="#sec4">profile_run / capture_model：启动期的两件大事</a></li>
+<li><a href="#sec5">execute_model 全景</a></li>
+<li><a href="#sec6">_update_states 完整步骤</a></li>
+<li><a href="#sec7">_prepare_inputs：心脏中的心脏</a></li>
+<li><a href="#sec8">_build_attention_metadata + set_forward_context</a></li>
+<li><a href="#sec9">_model_forward 与 Attention 层如何"暗中"拿元数据</a></li>
+<li><a href="#sec10">sample_tokens 与 ModelRunnerOutput</a></li>
+<li><a href="#sec11">一次完整 step 的时序图</a></li>
+</ol>
+</div>
+
+<h2 id="sec0">0. 全景图：ModelRunner 在 vLLM 中的位置</h2>
+
+<svg viewBox="0 0 1100 200" width="100%" style="max-width:1100px">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa0ad"/>
+    </marker>
+  </defs>
+  <g font-family="JetBrains Mono" font-size="12" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20"  y="60" width="150" height="70" rx="8" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="95" y="88">EngineCore</text>
+    <text x="95" y="108" fill="#9aa0ad" font-size="11">主循环 step()</text>
+
+    <rect x="185" y="60" width="150" height="70" rx="8" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="260" y="88">Scheduler</text>
+    <text x="260" y="108" fill="#9aa0ad" font-size="11">→ SchedulerOutput</text>
+
+    <rect x="350" y="60" width="140" height="70" rx="8" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="420" y="88">Executor</text>
+    <text x="420" y="108" fill="#9aa0ad" font-size="11">MP / Ray</text>
+
+    <rect x="505" y="60" width="140" height="70" rx="8" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="575" y="88">Worker</text>
+    <text x="575" y="108" fill="#9aa0ad" font-size="11">1 个 / GPU</text>
+
+    <rect x="660" y="40" width="200" height="110" rx="8" fill="#152018" stroke="#9ece6a" stroke-width="2"/>
+    <text x="760" y="68" fill="#9ece6a">GPUModelRunner</text>
+    <text x="760" y="88" fill="#9aa0ad" font-size="11">execute_model()</text>
+    <text x="760" y="103" fill="#9aa0ad" font-size="11">_update_states</text>
+    <text x="760" y="118" fill="#9aa0ad" font-size="11">_prepare_inputs</text>
+    <text x="760" y="133" fill="#9aa0ad" font-size="11">model.forward + sample</text>
+
+    <rect x="880" y="60" width="200" height="70" rx="8" fill="#1c2030" stroke="#e0af68"/>
+    <text x="980" y="88">Qwen3ForCausalLM</text>
+    <text x="980" y="108" fill="#9aa0ad" font-size="11">.forward(input_ids,…)</text>
+
+    <line x1="170" y1="95" x2="185" y2="95" stroke="#9aa0ad" marker-end="url(#ar)"/>
+    <line x1="335" y1="95" x2="350" y2="95" stroke="#9aa0ad" marker-end="url(#ar)"/>
+    <line x1="490" y1="95" x2="505" y2="95" stroke="#9aa0ad" marker-end="url(#ar)"/>
+    <line x1="645" y1="95" x2="660" y2="95" stroke="#9aa0ad" marker-end="url(#ar)"/>
+    <line x1="860" y1="95" x2="880" y2="95" stroke="#9aa0ad" marker-end="url(#ar)"/>
+
+    <text x="540" y="180" fill="#9aa0ad">EngineCore 决定调度；Executor 分发任务；Worker 在 GPU 上跑；ModelRunner 把模型跑起来。</text>
+  </g>
+</svg>
+
+<p>Scheduler 只产出"<b>方案</b>"——谁跑几个 token、用哪些 KV block。把方案"<b>变成 GPU 上的真实张量再跑出来</b>"全在 GPUModelRunner。</p>
+
+<hr>
+
+<h2 id="sec1">1. <code>__init__</code> — runner 持有的所有状态</h2>
+
+<p>构造代码在 <code class="ref">gpu_model_runner.py:418–~900</code>。下面把它分成 5 组讲。</p>
+
+<h3>1.1 配置对象（直接拷贝引用）</h3>
+<pre>self.vllm_config        = vllm_config         # 总配置
+self.model_config       = vllm_config.model_config
+self.cache_config       = vllm_config.cache_config
+self.parallel_config    = vllm_config.parallel_config
+self.scheduler_config   = vllm_config.scheduler_config
+self.compilation_config = vllm_config.compilation_config
+self.lora_config        = vllm_config.lora_config
+self.speculative_config = vllm_config.speculative_config</pre>
+<p class="ref">gpu_model_runner.py:423–433</p>
+
+<h3>1.2 容量常量（决定预分配缓冲的尺寸）</h3>
+<pre>self.max_model_len   = model_config.max_model_len             # 单 req 最长 token 数
+self.max_num_tokens  = scheduler_config.max_num_batched_tokens # 一步最多 token 数（跨 req 之和）
+self.max_num_reqs    = scheduler_config.max_num_seqs           # 一步最多 req 数</pre>
+<p class="ref">gpu_model_runner.py:458, 464–465</p>
+
+<h3>1.3 请求级持久态</h3>
+
+<pre>self.requests: dict[str, CachedRequestState] = {}       # req_id → 状态
+self.input_batch = InputBatch(                          # "当前在批中"的请求集合
+    max_num_reqs           = self.max_num_reqs,
+    max_model_len          = max(self.max_model_len, self.max_encoder_len),
+    max_num_batched_tokens = self.max_num_tokens,
+    device                 = self.device,
+    pin_memory             = self.pin_memory,
+    vocab_size             = self.model_config.get_vocab_size(),
+    block_sizes            = [placeholder_block_size],
+    kernel_block_sizes     = [placeholder_block_size],
+    num_spec_tokens        = self.num_spec_tokens,
+    logitsprocs            = build_logitsprocs(...),
+    ...
+)</pre>
+<p class="ref">gpu_model_runner.py:627, 650–678</p>
+
+<p><b><code>CachedRequestState</code></b>（<code class="ref">gpu_input_batch.py:33–88</code>）：</p>
+<pre>@dataclass
+class CachedRequestState:
+    req_id: str
+    prompt_token_ids: list[int] | None
+    mm_features: list[MultiModalFeatureSpec]
+    sampling_params: SamplingParams | None
+    generator: torch.Generator | None
+    block_ids: tuple[list[int], ...]              # 每个 KV cache group 一个 list
+    num_computed_tokens: int                      # 这条 seq 已计算过的 token 数
+    output_token_ids: list[int]                   # 已采出来的 token
+    mrope_positions: torch.Tensor | None = None
+    lora_request: LoRARequest | None = None
+    prompt_embeds: torch.Tensor | None = None
+    ...
+
+    @property
+    def num_tokens(self) -> int:
+        return self.num_prompt_tokens + len(self.output_token_ids)</pre>
+
+<p><b><code>InputBatch</code></b> 的关键字段（<code class="ref">gpu_input_batch.py:91–230</code>）：</p>
+<table>
+<tr><th>字段</th><th>类型 / 形状</th><th>用途</th></tr>
+<tr><td><code>req_id_to_index</code></td><td>dict[str,int]</td><td>req_id → 在批中行号</td></tr>
+<tr><td><code>token_ids_cpu_tensor</code></td><td>CPU int32 [max_num_reqs, max_model_len]</td><td>所有 req 的完整 token 历史（避免每步重传）</td></tr>
+<tr><td><code>num_computed_tokens_cpu</code></td><td>CPU int32 [max_num_reqs]</td><td>每 req 已计算的 token 数</td></tr>
+<tr><td><code>num_prompt_tokens</code></td><td>CPU int32 [max_num_reqs]</td><td>prompt 长度</td></tr>
+<tr><td><code>num_tokens_no_spec</code></td><td>CPU int32 [max_num_reqs]</td><td>不含 spec 的 token 总数</td></tr>
+<tr><td><code>block_table</code></td><td>MultiGroupBlockTable</td><td>每 req → KV block 列表，每个 KV cache group 一份</td></tr>
+<tr><td><code>temperature/top_p/top_k/penalties</code></td><td>GPU + CPU 各 [max_num_reqs]</td><td>采样参数（双拷贝便于异步上传）</td></tr>
+<tr><td><code>greedy_reqs / random_reqs</code></td><td>set[str]</td><td>采样模式分组</td></tr>
+</table>
+
+<h3>1.4 预分配的 GPU 缓冲（CUDA Graph 友好）</h3>
+
+<pre>self.input_ids        = self._make_buffer(self.max_num_tokens, dtype=torch.int32)
+self.positions        = torch.zeros(self.max_num_tokens, dtype=torch.int64, device=device)
+self.query_start_loc  = self._make_buffer(self.max_num_reqs + 1, dtype=torch.int32)
+self.seq_lens         = torch.zeros(self.max_num_reqs, dtype=torch.int32, device=device)
+self.num_computed_tokens = torch.zeros(self.max_num_reqs, dtype=torch.int32, device=device)
+self.req_indices      = self._make_buffer(self.max_num_tokens, dtype=torch.int64)
+self.num_scheduled_tokens = self._make_buffer(self.max_num_reqs, dtype=torch.int32)
+self.inputs_embeds    = self._make_buffer(self.max_num_tokens, hidden_size, dtype=dtype, numpy=False)
+self.optimistic_seq_lens_cpu = torch.zeros(self.max_num_reqs, dtype=torch.int32, pin_memory=True)
+# 缓存 arange 避免每步重建：
+arange_size = max(self.max_num_reqs + 1, self.max_num_tokens)
+self.arange_np = np.arange(arange_size, dtype=np.int64)
+self.query_pos = self._make_buffer(arange_size, dtype=torch.int64)</pre>
+<p class="ref">gpu_model_runner.py:709–790</p>
+
+<div class="key"><b><code>CpuGpuBuffer</code>（<code>_make_buffer</code> 返回值）</b>：同时持有 CPU + GPU 两份内存，加上一个对 CPU 的 numpy view。用法：
+<pre>buf.np[:n] = some_cpu_array      # 写 CPU
+buf.copy_to_gpu(n)               # H2D
+gpu_view = buf.gpu[:n]           # GPU 端 view</pre>
+这种结构在 <code>_prepare_inputs</code> 里随处可见——<b>CPU 算索引，GPU 用张量</b>。</div>
+
+<h3>1.5 KV / Attention / Sampler（启动后才填）</h3>
+<pre>self.kv_caches: list[torch.Tensor] = []              # initialize_kv_cache 后填
+self.attn_groups: list[list[AttentionGroup]] = []
+self.sampler = Sampler(logprobs_mode=self.model_config.logprobs_mode)
+self.cudagraph_dispatcher = CudagraphDispatcher(self.vllm_config)</pre>
+<p class="ref">gpu_model_runner.py:504, 519, 524, 808</p>
+
+<hr>
+
+<h2 id="sec2">2. <code>load_model</code> — 模型怎么进 GPU</h2>
+
+<pre>def load_model(self, load_dummy_weights: bool = False) -> None:
+    with DeviceMemoryProfiler() as m:
+        # 1) 选 loader（HF / GGUF / Marlin-Quant / ...）
+        model_loader = get_model_loader(self.load_config)
+
+        # 2) 实例化 Qwen3ForCausalLM 并加载权重。
+        #    Loader 内部就会按 TP/PP 切权重，所以返回时已经分片好了。
+        self.model = model_loader.load_model(
+            vllm_config=self.vllm_config,
+            model_config=self.model_config,
+        )
+
+        # 3) 可选包 LoRA、Drafter（speculative decoding）
+        if self.lora_config:
+            self.model = self.load_lora_model(...)
+        if hasattr(self, "drafter"):
+            self.drafter.load_model(self.model)
+
+        self._setup_eagle3_aux_hidden_state_outputs()
+        # 4) MoE 检测，EPLB 状态等（Qwen3 dense 模型用不到）
+
+    self.model_memory_usage = m.consumed_memory
+    # 5) NCCL/all-reduce 通信缓冲准备
+    prepare_communication_buffer_for_model(self.model)</pre>
+<p class="ref">gpu_model_runner.py:5032–5160</p>
+
+<div class="note"><b>注意 <code>DeviceMemoryProfiler</code></b>：<code>with</code> 块结束后 <code>m.consumed_memory</code> 就是模型参数占的显存。下一步 <code>profile_run</code> 还会量"激活 + KV cache 预算"。</div>
+
+<hr>
+
+<h2 id="sec3">3. <code>initialize_kv_cache</code> — 分页 KV 池的几何</h2>
+
+<pre>def initialize_kv_cache(self, kv_cache_config, is_profiling=False) -> None:
+    kv_cache_config = deepcopy(kv_cache_config)
+    self.kv_cache_config = kv_cache_config
+
+    self.may_add_encoder_only_layers_to_kv_cache_config()
+    self.maybe_add_kv_sharing_layers_to_kv_cache_groups(kv_cache_config)
+
+    # 1) 给每个 attention 层选 backend（FlashAttn / FlashInfer / Triton…）
+    self.initialize_attn_backend(kv_cache_config, is_profiling=is_profiling)
+
+    # 2) 决定每个 group 的 "kernel block size"（kv_manager 是 256 但 kernel 只支持 64,
+    #    则要拆 1→4）
+    kernel_block_sizes = prepare_kernel_block_sizes(kv_cache_config, self.attn_groups)
+
+    # 3) 给每个 attention group 建 metadata builder
+    self.initialize_metadata_builders(kv_cache_config, kernel_block_sizes)
+
+    # 4) 如果 block_size 变了，重建 InputBatch（block_table 跟着改）
+    self.may_reinitialize_input_batch(kv_cache_config, kernel_block_sizes)
+
+    # 5) 真正分配显存
+    kv_caches = self.initialize_kv_cache_tensors(kv_cache_config, kernel_block_sizes)</pre>
+<p class="ref">gpu_model_runner.py:7155–7212</p>
+
+<h3>3.1 KV cache 张量布局</h3>
+
+<p><code>initialize_kv_cache_tensors</code>（<code class="ref">:7072–7125</code>）：</p>
+<pre>if self.use_uniform_kv_cache(self.attn_groups, cache_dtype):
+    kv_caches, cross_layers_kv_cache, attn_backend = (
+        self.allocate_uniform_kv_caches(kv_cache_config, ...)
+    )
+else:
+    kv_cache_raw_tensors = self._allocate_kv_cache_tensors(kv_cache_config)
+    kv_caches = self._reshape_kv_cache_tensors(kv_cache_raw_tensors, kernel_block_sizes)
+
+# 关键：把每层的 cache 注册到全局 forward_context，attention 层后续用
+# layer_name 就能找到自己的 cache
+bind_kv_cache(
+    kv_caches,                                         # dict[layer_name → Tensor]
+    self.compilation_config.static_forward_context,    # 全局注册表
+    self.kv_caches,                                    # 持久 list 引用
+    num_attn_module,
+)
+return kv_caches</pre>
+
+<p>每层的 cache 形状（FlashAttention backend，paged）大致：</p>
+<svg viewBox="0 0 900 200" width="100%" style="max-width:900px">
+  <g font-family="JetBrains Mono" font-size="12" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20" y="40" width="860" height="100" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="450" y="30" fill="#9aa0ad">kv_caches["model.layers.i.self_attn.attn"]</text>
+    <text x="450" y="78">shape = [2,  num_blocks,  block_size,  num_kv_heads_local,  head_dim]</text>
+    <text x="450" y="98" fill="#bb9af7" font-size="11">  K|V       全局池          每块 16token       本卡的 KV 头             128</text>
+    <text x="450" y="125" fill="#9aa0ad" font-size="11">总字节 ≈ 2 × num_blocks × 16 × 4 × 128 × 2(bf16) = num_blocks × 32KB / 层</text>
+  </g>
+</svg>
+
+<p><code>num_blocks</code> 由"剩余显存 / 单 block 字节数"算出，这个值在 <code>profile_run</code> 之后才能确定。</p>
+
+<div class="note"><b><code>bind_kv_cache</code> 是关键</b>：它做的事情等价于：
+<pre>for layer_name, cache_tensor in kv_caches.items():
+    static_forward_context[layer_name].kv_cache = cache_tensor</pre>
+之后 Attention 层在 forward 里就能用 <code>self.kv_cache</code> 拿到自己的那块物理内存——<b>不通过函数签名传参</b>。</div>
+
+<h3>3.2 同一时刻所有 attention 层共享一个 "block 池"</h3>
+
+<svg viewBox="0 0 900 200" width="100%" style="max-width:900px">
+  <g font-family="JetBrains Mono" font-size="11" fill="#e6e8ee" text-anchor="middle">
+    <text x="450" y="20" fill="#9aa0ad">36 层 Qwen3 × kv_caches[layer_i] → 每层独占一块显存，但 block 索引体系是统一的</text>
+    <rect x="20" y="30" width="860" height="22" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="450" y="46">layer 0 cache:  [ b0 | b1 | b2 | ... | b_N ]</text>
+    <rect x="20" y="58" width="860" height="22" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="450" y="74">layer 1 cache:  [ b0 | b1 | b2 | ... | b_N ]</text>
+    <rect x="20" y="86" width="860" height="22" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="450" y="102">layer 2 cache:  [ b0 | b1 | b2 | ... | b_N ]</text>
+    <text x="450" y="130" fill="#9aa0ad">...</text>
+    <text x="450" y="155" fill="#e0af68">block_table 给 req 分配的物理 block 编号 → 对所有 36 层都成立</text>
+    <text x="450" y="175" fill="#9aa0ad">这意味着 "req X 的第 i 个 block" 在每层对应同一行 block_id</text>
+  </g>
+</svg>
+
+<hr>
+
+<h2 id="sec4">4. <code>profile_run</code> / <code>capture_model</code></h2>
+
+<table>
+<tr><th>方法</th><th>主要动作</th><th>目的</th></tr>
+<tr><td><code>profile_run</code><br><span class="ref">:6104</span></td>
+    <td>用 max batch 跑一次 <code>_dummy_run(self.max_num_tokens, is_profile=True)</code>，记录峰值显存</td>
+    <td>留给 KV cache 用的显存 = total - weights - peak_activation</td></tr>
+<tr><td><code>capture_model</code><br><span class="ref">:6373</span></td>
+    <td>遍历 <code>cudagraph_batch_sizes</code>（启动时排好序的 list），在 <code>graph_capture()</code> 上下文内 replay-record kernel</td>
+    <td>给每个常见 batch size 一份 graph，运行时 dispatch 后直接 replay</td></tr>
+</table>
+
+<pre># gpu_model_runner.py:690–699
+if (self.compilation_config.cudagraph_capture_sizes
+    and self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE):
+    self.cudagraph_batch_sizes = sorted(
+        self.compilation_config.cudagraph_capture_sizes
+    )
+else:
+    self.cudagraph_batch_sizes = []</pre>
+
+<div class="note"><b>为什么 forward 用预分配缓冲？</b> CUDA Graph 把每个 kernel 的输入张量"<b>地址</b>"捕获进 graph，replay 时只能用同一组地址。所以 <code>self.input_ids</code>、<code>self.positions</code> 等必须每步写到<b>同一块</b>显存里。</div>
+
+<hr>
+
+<h2 id="sec5">5. <code>execute_model</code> 全景</h2>
+
+<p>核心代码骨架（<code class="ref">gpu_model_runner.py:3955–4317</code>）：</p>
+
+<pre>def execute_model(self, scheduler_output, intermediate_tensors=None):
+    if self.execute_model_state is not None:
+        raise RuntimeError("State error: sample_tokens() must be called after execute_model().")
+
+    # 这里省略 ngram_gpu / kv_transfer 处理 ...
+
+    num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+    with record_function_or_nullcontext("gpu_model_runner: preprocess"), \
+         self.synchronize_input_prep():
+
+        # ① 同步 InputBatch
+        deferred_state_corrections_fn = self._update_states(scheduler_output)
+
+        if not num_scheduled_tokens:
+            return EMPTY_MODEL_RUNNER_OUTPUT      # 没活干，直接返回
+
+        num_reqs = self.input_batch.num_reqs
+        req_ids = self.input_batch.req_ids
+        tokens = [scheduler_output.num_scheduled_tokens[i] for i in req_ids]
+        num_scheduled_tokens_np = np.array(tokens, dtype=np.int32)
+        max_num_scheduled_tokens = int(num_scheduled_tokens_np.max())
+        num_tokens_unpadded = scheduler_output.total_num_scheduled_tokens
+
+        # ② 构建扁平张量
+        logits_indices, spec_decode_metadata = self._prepare_inputs(
+            scheduler_output, num_scheduled_tokens_np,
+        )
+
+        # ③ CUDA graph mode / DBO 分支 / padding
+        (cudagraph_mode, batch_desc, should_ubatch,
+         num_tokens_across_dp, cudagraph_stats) = self._determine_batch_execution_and_padding(...)
+
+        # ④ 取出每个 KV-group 的 slot_mapping
+        slot_mappings_by_group, slot_mappings = self._get_slot_mappings(...)
+
+        # ⑤ 每层 attention 的元数据
+        attn_metadata, spec_decode_common_attn_metadata = self._build_attention_metadata(
+            num_tokens=num_tokens_unpadded, num_reqs=num_reqs,
+            max_query_len=max_num_scheduled_tokens,
+            slot_mappings=slot_mappings_by_group, ...
+        )
+
+        # ⑥ 把 input_ids / positions / intermediate_tensors 整理好
+        (input_ids, inputs_embeds, positions,
+         intermediate_tensors, model_kwargs, ec_connector_output) = self._preprocess(
+            scheduler_output, num_tokens_padded, intermediate_tensors,
+        )
+
+    # ⑦ 进入 forward
+    with set_forward_context(
+            attn_metadata, self.vllm_config,
+            num_tokens=num_tokens_padded,
+            num_tokens_across_dp=num_tokens_across_dp,
+            cudagraph_runtime_mode=cudagraph_mode,
+            batch_descriptor=batch_desc,
+            ubatch_slices=ubatch_slices_padded,
+            slot_mapping=slot_mappings,
+            skip_compiled=has_encoder_input,
+         ), \
+         record_function_or_nullcontext("gpu_model_runner: forward"), \
+         self.maybe_get_kv_connector_output(...) as kv_connector_output:
+
+        model_output = self._model_forward(
+            input_ids=input_ids,
+            positions=positions,
+            intermediate_tensors=intermediate_tensors,
+            inputs_embeds=inputs_embeds,
+            **model_kwargs,
+        )
+
+    # ⑧ Postprocess
+    with record_function_or_nullcontext("gpu_model_runner: postprocess"):
+        hidden_states = model_output
+        if not get_pp_group().is_last_rank:
+            return hidden_states                  # PP 中间 rank 不算 logits
+        sample_hidden_states = hidden_states[logits_indices]
+        logits = self.model.compute_logits(sample_hidden_states)
+
+    # ⑨ 把所有"中间产物"存进 self.execute_model_state，等 sample_tokens() 用
+    self.execute_model_state = ExecuteModelState(
+        scheduler_output, logits, spec_decode_metadata,
+        spec_decode_common_attn_metadata, hidden_states,
+        sample_hidden_states, aux_hidden_states,
+        ec_connector_output, cudagraph_stats, slot_mappings,
+    )
+    self.kv_connector_output = kv_connector_output
+    return None      # 必须接着调 sample_tokens()</pre>
+
+<svg viewBox="0 0 1140 600" width="100%" style="max-width:1140px">
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa0ad"/>
+    </marker>
+  </defs>
+  <g font-family="JetBrains Mono" font-size="12" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20" y="10" width="200" height="40" rx="6" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="120" y="36">SchedulerOutput</text>
+
+    <line x1="120" y1="50" x2="120" y2="80" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="80" width="200" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="120" y="105">① _update_states</text>
+
+    <line x1="120" y1="120" x2="120" y2="150" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="150" width="200" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="120" y="175">② _prepare_inputs</text>
+
+    <line x1="120" y1="190" x2="120" y2="220" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="220" width="200" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="120" y="245">③ _determine_batch_exec</text>
+
+    <line x1="120" y1="260" x2="120" y2="290" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="290" width="200" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="120" y="315">④ _get_slot_mappings</text>
+
+    <line x1="120" y1="330" x2="120" y2="360" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="360" width="200" height="40" rx="6" fill="#152018" stroke="#9ece6a"/>
+    <text x="120" y="385">⑤ _build_attention_metadata</text>
+
+    <line x1="120" y1="400" x2="120" y2="430" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="430" width="200" height="40" rx="6" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="120" y="455">⑥ _preprocess</text>
+
+    <line x1="220" y1="450" x2="260" y2="450" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="260" y="430" width="220" height="40" rx="6" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="370" y="455">⑦ set_forward_context</text>
+
+    <line x1="480" y1="450" x2="520" y2="450" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="520" y="430" width="220" height="40" rx="6" fill="#0f1c2a" stroke="#7aa2f7"/>
+    <text x="630" y="455">⑧ self._model_forward</text>
+
+    <line x1="740" y1="450" x2="780" y2="450" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="780" y="430" width="220" height="40" rx="6" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="890" y="455">⑨ compute_logits</text>
+
+    <line x1="890" y1="470" x2="890" y2="510" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="780" y="510" width="220" height="60" rx="6" fill="#2a2310" stroke="#e0af68"/>
+    <text x="890" y="535">⑩ execute_model_state =</text>
+    <text x="890" y="555" font-size="11" fill="#9aa0ad">ExecuteModelState(...)</text>
+
+    <line x1="780" y1="540" x2="740" y2="540" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="520" y="510" width="220" height="60" rx="6" fill="#1c2030" stroke="#f7768e"/>
+    <text x="630" y="535">return None</text>
+    <text x="630" y="555" font-size="11" fill="#9aa0ad">→ 等 sample_tokens()</text>
+
+    <text x="120" y="500" fill="#e0af68" font-size="11">↑ 全部包在 record_function 块</text>
+    <text x="120" y="520" fill="#e0af68" font-size="11">  + synchronize_input_prep()</text>
+  </g>
+</svg>
+
+<hr>
+
+<h2 id="sec6">6. <code>_update_states</code> 完整步骤</h2>
+
+<p>这是把 scheduler 的"决策"翻译成 runner 的"持久状态变更"。整段在 <code class="ref">gpu_model_runner.py:1116–1486</code>，按顺序做 5 件事：</p>
+
+<h3>6.1 删除已完成请求</h3>
+<pre># :1127–1140
+for req_id in scheduler_output.finished_req_ids:
+    self.requests.pop(req_id, None)
+    self.num_prompt_logprobs.pop(req_id, None)
+self.late_interaction_runner.on_requests_finished(scheduler_output.finished_req_ids)
+for req_id in scheduler_output.finished_req_ids:
+    self.input_batch.remove_request(req_id)</pre>
+
+<h3>6.2 把新分配的 block 清零（防 NaN）</h3>
+<pre># :1144–1145
+if scheduler_output.new_block_ids_to_zero:
+    self._zero_block_ids(scheduler_output.new_block_ids_to_zero)</pre>
+
+<div class="warn">"清零"很重要：分页 KV 池是循环复用的。新拿到的 block 之前可能被别的 req 写过 NaN（fp16 溢出常见），不清零会污染当前计算。</div>
+
+<h3>6.3 移除"本步未被调度"的请求</h3>
+<pre># :1151–1171
+scheduled_req_ids = scheduler_output.num_scheduled_tokens.keys()
+cached_req_ids    = self.input_batch.req_id_to_index.keys()
+resumed_req_ids   = scheduler_output.scheduled_cached_reqs.resumed_req_ids
+unscheduled_req_ids = cached_req_ids - (scheduled_req_ids - resumed_req_ids)
+for req_id in unscheduled_req_ids:
+    self.input_batch.remove_request(req_id)
+# 注意：cached_req_states 还在；只是从 input_batch 里弹出</pre>
+<p>"持久 batch"假定<b>连续两步的请求集合 mostly 相同</b>；这一步把异常的剔出去。</p>
+
+<h3>6.4 加入新请求</h3>
+<pre># :1184–1248
+for new_req_data in scheduler_output.scheduled_new_reqs:
+    req_id = new_req_data.req_id
+    sampling_params = new_req_data.sampling_params
+    if sampling_params and sampling_params.sampling_type == SamplingType.RANDOM_SEED:
+        generator = torch.Generator(device=self.device); generator.manual_seed(...)
+    else:
+        generator = None
+
+    req_state = CachedRequestState(
+        req_id=req_id,
+        prompt_token_ids=new_req_data.prompt_token_ids,
+        prompt_embeds=new_req_data.prompt_embeds,
+        mm_features=new_req_data.mm_features,
+        sampling_params=sampling_params,
+        pooling_params=pooling_params,
+        generator=generator,
+        block_ids=new_req_data.block_ids,
+        num_computed_tokens=new_req_data.num_computed_tokens,
+        output_token_ids=[],
+        lora_request=new_req_data.lora_request,
+    )
+    self.requests[req_id] = req_state
+    reqs_to_add.append(req_state)</pre>
+
+<h3>6.5 更新 running/resumed 请求的 num_computed_tokens、新 token、新 block</h3>
+<pre># :1273–1370
+for i, req_id in enumerate(req_data.req_ids):
+    req_state = self.requests[req_id]
+    num_computed_tokens = req_data.num_computed_tokens[i]
+    new_block_ids       = req_data.new_block_ids[i]
+    resumed_from_preemption = req_id in req_data.resumed_req_ids
+    num_output_tokens   = req_data.num_output_tokens[i]
+
+    req_state.num_computed_tokens = num_computed_tokens   # 关键更新
+
+    # 把上一步新出的 token 追加到 req_state.output_token_ids
+    new_token_ids = req_data.new_token_ids[i]
+    if num_new_tokens == 1:
+        req_state.output_token_ids.append(new_token_ids[-1])
+    elif num_new_tokens > 0:
+        req_state.output_token_ids.extend(new_token_ids[-num_new_tokens:])
+
+    # 追加新分配的 block 到 req 的 block_ids
+    if not resumed_from_preemption:
+        if new_block_ids is not None:
+            for block_ids, new_ids in zip(req_state.block_ids, new_block_ids):
+                block_ids.extend(new_ids)
+    else:
+        req_state.block_ids = new_block_ids               # 完全替换</pre>
+
+<p class="small">函数还有大量 spec-decode 校正逻辑（draft len、num_accepted 等），跑 Qwen3 普通推理时基本走 if-else 的 else 分支，跳过即可。</p>
+
+<hr>
+
+<h2 id="sec7">7. <code>_prepare_inputs</code> — 心脏中的心脏</h2>
+
+<p>来看真正贴一份它的核心代码（删了 mrope / spec 等支路），看完你就懂"扁平张量"是怎么从持久状态里 <b>index_select</b> 出来的。</p>
+
+<h3>7.1 假设场景</h3>
+<table>
+<tr><th>req</th><th>num_computed_tokens</th><th>num_scheduled_tokens (本步)</th><th>含义</th></tr>
+<tr><td>A (idx 0)</td><td>0</td><td>5</td><td>prefill 前 5 个 token</td></tr>
+<tr><td>B (idx 1)</td><td>0</td><td>3</td><td>prefill 全部</td></tr>
+<tr><td>C (idx 2)</td><td>120</td><td>1</td><td>decode</td></tr>
+</table>
+<p>合计 <code>total_num_scheduled_tokens = 9</code>。</p>
+
+<h3>7.2 req_indices + cu_num_tokens + 步内 offset</h3>
+
+<pre># :1885–1893
+# E.g., [2, 5, 3] -> [0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
+req_indices = np.repeat(self.arange_np[:num_reqs], num_scheduled_tokens)
+
+# cu_num_tokens: [2, 5, 3] -> [2, 7, 10]
+# self.query_pos.np[:10]: [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
+cu_num_tokens = self._get_cumsum_and_arange(
+    num_scheduled_tokens, self.query_pos.np
+)</pre>
+
+<p>套到我们的例子：</p>
+<table>
+<tr><th>变量</th><th>值</th></tr>
+<tr><td><code>num_scheduled_tokens</code></td><td><code>[5, 3, 1]</code></td></tr>
+<tr><td><code>req_indices</code> (长 9)</td><td><code>[0,0,0,0,0, 1,1,1, 2]</code></td></tr>
+<tr><td><code>cu_num_tokens</code> (长 3)</td><td><code>[5, 8, 9]</code></td></tr>
+<tr><td><code>query_pos.np[:9]</code></td><td><code>[0,1,2,3,4, 0,1,2, 0]</code></td></tr>
+</table>
+
+<h3>7.3 positions（CPU 版） + 拷给 GPU</h3>
+<pre># :1895–1899
+positions_np = (
+    self.input_batch.num_computed_tokens_cpu[req_indices]
+    + self.query_pos.np[: cu_num_tokens[-1]]
+)</pre>
+<p>展开：</p>
+<pre>num_computed_tokens_cpu[req_indices] = [  0,  0,  0,  0,  0,   0,  0,  0,  120]
+query_pos.np[:9]                     = [  0,  1,  2,  3,  4,   0,  1,  2,    0]
+positions_np                         = [  0,  1,  2,  3,  4,   0,  1,  2,  120]</pre>
+
+<p>后面 GPU 版直接在 GPU 上算：</p>
+<pre># :2084–2087
+self.positions[:total_num_scheduled_tokens] = (
+    self.num_computed_tokens[req_indices_gpu].to(torch.int64)
+    + self.query_pos.gpu[:total_num_scheduled_tokens]
+)</pre>
+
+<h3>7.4 input_ids — 从 token_ids_cpu 的二维 buffer 选出来</h3>
+<pre># :1911–1928
+# token_indices = positions_np + req_indices * max_model_len
+# 例如 A 在第 0 行从 col 0 开始取 5 个; B 在第 1 行从 col 0 开始取 3 个;
+# C 在第 2 行从 col 120 取 1 个
+token_indices = (
+    positions_np + req_indices * self.input_batch.token_ids_cpu.shape[1]
+)
+token_indices_tensor = torch.from_numpy(token_indices)
+
+# torch.index_select 比 np.take 在大张量上快 → 把目标位置一次性 gather
+torch.index_select(
+    self.input_batch.token_ids_cpu_tensor.flatten(),
+    0, token_indices_tensor,
+    out=self.input_ids.cpu[:total_num_scheduled_tokens],
+)</pre>
+
+<svg viewBox="0 0 980 200" width="100%" style="max-width:980px">
+  <g font-family="JetBrains Mono" font-size="11" fill="#e6e8ee" text-anchor="middle">
+    <text x="20" y="20" text-anchor="start" fill="#9aa0ad">token_ids_cpu_tensor [max_reqs, max_model_len]：</text>
+    <rect x="20" y="30" width="600" height="24" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="320" y="46" fill="#7aa2f7">A 行: t0 t1 t2 t3 t4 t5 ... (max_model_len 个槽)</text>
+    <rect x="20" y="56" width="600" height="24" fill="#1c2030" stroke="#bb9af7"/>
+    <text x="320" y="72" fill="#bb9af7">B 行: u0 u1 u2 u3 ... </text>
+    <rect x="20" y="82" width="600" height="24" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="320" y="98" fill="#9ece6a">C 行: v0 ... v119 v120 v121 ...</text>
+
+    <text x="640" y="68" fill="#9aa0ad">flatten + index_select →</text>
+
+    <text x="20" y="135" text-anchor="start" fill="#9aa0ad">self.input_ids.cpu[:9]:</text>
+    <g>
+      <rect x="20"  y="145" width="40" height="40" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/><text x="40"  y="170">t0</text>
+      <rect x="60"  y="145" width="40" height="40" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/><text x="80"  y="170">t1</text>
+      <rect x="100" y="145" width="40" height="40" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/><text x="120" y="170">t2</text>
+      <rect x="140" y="145" width="40" height="40" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/><text x="160" y="170">t3</text>
+      <rect x="180" y="145" width="40" height="40" fill="#7aa2f7" opacity="0.45" stroke="#7aa2f7"/><text x="200" y="170">t4</text>
+      <rect x="240" y="145" width="40" height="40" fill="#bb9af7" opacity="0.45" stroke="#bb9af7"/><text x="260" y="170">u0</text>
+      <rect x="280" y="145" width="40" height="40" fill="#bb9af7" opacity="0.45" stroke="#bb9af7"/><text x="300" y="170">u1</text>
+      <rect x="320" y="145" width="40" height="40" fill="#bb9af7" opacity="0.45" stroke="#bb9af7"/><text x="340" y="170">u2</text>
+      <rect x="380" y="145" width="40" height="40" fill="#9ece6a" opacity="0.45" stroke="#9ece6a"/><text x="400" y="170">v120</text>
+    </g>
+  </g>
+</svg>
+
+<h3>7.5 query_start_loc</h3>
+<pre># :1977–1983
+self.query_start_loc.np[0] = 0
+self.query_start_loc.np[1 : num_reqs + 1] = cu_num_tokens
+# pad: kernel 要求非递减
+self.query_start_loc.np[num_reqs + 1 :].fill(cu_num_tokens[-1])
+self.query_start_loc.copy_to_gpu()
+query_start_loc = self.query_start_loc.gpu[: num_reqs + 1]
+# 结果: [0, 5, 8, 9]   (flash-attn 用它区分 req)</pre>
+
+<h3>7.6 seq_lens（含本步全部 token 后的总长度）</h3>
+<pre># :2088–2091   GPU 版
+self.seq_lens[:num_reqs] = (
+    self.num_computed_tokens[:num_reqs] + num_scheduled_tokens_gpu
+)
+self.seq_lens[num_reqs:].fill_(0)
+# 结果: [5, 3, 121]   ← 注意 C 是 120+1，给 attention 用作 "可看到多远的 K/V"</pre>
+
+<h3>7.7 slot_mapping — 写 KV 池的位置</h3>
+
+<pre># :2093–2097
+self.input_batch.block_table.compute_slot_mapping(
+    num_reqs,
+    self.query_start_loc.gpu[: num_reqs + 1],
+    self.positions[:total_num_scheduled_tokens],
+)</pre>
+
+<p>真正干活的是一个 Triton kernel（<code class="ref">block_table.py:141–164</code>）：</p>
+<pre>def compute_slot_mapping(self, num_reqs, query_start_loc, positions) -> None:
+    num_tokens = positions.shape[0]
+    _compute_slot_mapping_kernel[(num_reqs + 1,)](
+        num_tokens,
+        self.max_num_batched_tokens,
+        query_start_loc,
+        positions,
+        self.block_table.gpu,           # [num_reqs, max_blocks_per_req]
+        self.block_table.gpu.stride(0),
+        self.block_size,                # 例如 16
+        self.slot_mapping.gpu,          # 输出: [num_tokens] int64
+        TOTAL_CP_WORLD_SIZE=total_cp_world_size,
+        TOTAL_CP_RANK=total_cp_rank,
+        CP_KV_CACHE_INTERLEAVE_SIZE=self.cp_kv_cache_interleave_size,
+        PAD_ID=PAD_SLOT_ID,
+        BLOCK_SIZE=1024,
+    )</pre>
+
+<p>逻辑等价于：</p>
+<div class="panel"><code>slot_mapping[i] = block_table[req_indices[i], positions[i] // block_size] × block_size + (positions[i] % block_size)</code></div>
+
+<svg viewBox="0 0 900 240" width="100%" style="max-width:900px">
+  <g font-family="JetBrains Mono" font-size="11" fill="#e6e8ee" text-anchor="middle">
+    <text x="20" y="20" text-anchor="start" fill="#9aa0ad">假设 block_size=4：</text>
+    <text x="20" y="42" text-anchor="start" fill="#7aa2f7">A.block_ids = [7]   → A 的所有 KV 都写在物理 block 7 内</text>
+    <text x="20" y="62" text-anchor="start" fill="#bb9af7">B.block_ids = [12]</text>
+    <text x="20" y="82" text-anchor="start" fill="#9ece6a">C.block_ids = [3, 9, 17, ..., 42]  (31 个 block 装 120 token)</text>
+
+    <text x="20" y="115" text-anchor="start" fill="#9aa0ad">positions = [0,1,2,3,4, 0,1,2, 120]</text>
+    <text x="20" y="135" text-anchor="start" fill="#9aa0ad">slot_mapping[:9] =</text>
+    <g>
+      <rect x="20"  y="150" width="60" height="40" fill="#7aa2f7" opacity="0.45"/><text x="50"  y="175" font-size="10">7·4+0=28</text>
+      <rect x="80"  y="150" width="60" height="40" fill="#7aa2f7" opacity="0.45"/><text x="110" y="175" font-size="10">29</text>
+      <rect x="140" y="150" width="60" height="40" fill="#7aa2f7" opacity="0.45"/><text x="170" y="175" font-size="10">30</text>
+      <rect x="200" y="150" width="60" height="40" fill="#7aa2f7" opacity="0.45"/><text x="230" y="175" font-size="10">31</text>
+      <rect x="260" y="150" width="60" height="40" fill="#7aa2f7" opacity="0.4"/><text x="290" y="175" font-size="10">b_next×4+0</text>
+      <rect x="320" y="150" width="60" height="40" fill="#bb9af7" opacity="0.45"/><text x="350" y="175" font-size="10">12·4+0=48</text>
+      <rect x="380" y="150" width="60" height="40" fill="#bb9af7" opacity="0.45"/><text x="410" y="175" font-size="10">49</text>
+      <rect x="440" y="150" width="60" height="40" fill="#bb9af7" opacity="0.45"/><text x="470" y="175" font-size="10">50</text>
+      <rect x="500" y="150" width="60" height="40" fill="#9ece6a" opacity="0.45"/><text x="530" y="175" font-size="10">42·4+0=168</text>
+    </g>
+    <text x="20" y="215" text-anchor="start" fill="#e0af68">attention kernel 会用 slot_mapping[i] 把 new_k, new_v 写到 kv_caches[:, slot_mapping[i], …]</text>
+  </g>
+</svg>
+
+<h3>7.8 logits_indices — 哪些位置需要 logits</h3>
+
+<pre># :2128–2137 （非 spec decode 分支）
+use_spec_decode = len(scheduler_output.scheduled_spec_decode_tokens) > 0
+if not use_spec_decode:
+    logits_indices = query_start_loc[1:] - 1
+    spec_decode_metadata = None
+    num_sampled_tokens = np.ones(num_reqs, dtype=np.int32)
+else:
+    # 计算 draft token 在扁平张量里的位置 (见 _calc_spec_decode_metadata)
+    ...
+    logits_indices = spec_decode_metadata.logits_indices</pre>
+
+<p>对我们这个例子：</p>
+<pre>query_start_loc[1:] = [5, 8, 9]
+logits_indices      = [4, 7, 8]   # 每个 req 的最后一个 token 在扁平张量里的下标</pre>
+
+<div class="note"><b>chunked prefill 的"假采样"</b>：A 还在 prefill 中（5 个 token 还没把 prompt 跑完），它的最后一个位置也会被采样、但后续会被丢弃。代码注释里也写了：
+<pre># Due to chunked prefills, the batch may contain partial requests.
+# While we should not sample any token from these partial requests, we do so for simplicity.
+# We will ignore the sampled tokens from the partial requests.</pre></div>
+
+<h3>7.9 把所有 numpy 数据真正传到 GPU</h3>
+
+<pre># :2076–2090 集中 H2D
+self.req_indices.np[:total_num_scheduled_tokens] = req_indices
+self.req_indices.copy_to_gpu(total_num_scheduled_tokens)
+req_indices_gpu = self.req_indices.gpu[:total_num_scheduled_tokens]
+
+self.query_pos.copy_to_gpu(total_num_scheduled_tokens)
+self.num_scheduled_tokens.np[:num_reqs] = num_scheduled_tokens
+self.num_scheduled_tokens.copy_to_gpu(num_reqs)
+
+self.positions[:total_num_scheduled_tokens] = (
+    self.num_computed_tokens[req_indices_gpu].to(torch.int64)
+    + self.query_pos.gpu[:total_num_scheduled_tokens]
+)
+self.seq_lens[:num_reqs] = (
+    self.num_computed_tokens[:num_reqs] + num_scheduled_tokens_gpu
+)</pre>
+
+<h3>7.10 _prepare_inputs 返回什么</h3>
+<pre>return (
+    logits_indices,        # [num_reqs]  哪些位置要采样
+    spec_decode_metadata,  # SpecDecodeMetadata | None
+)</pre>
+<p class="ref">gpu_model_runner.py:2178–2181</p>
+
+<div class="key"><b>注意</b>：input_ids / positions / seq_lens / slot_mapping 等都<b>没有作为返回值传出去</b>——它们写进了 <code>self.</code> 预分配缓冲，下游通过 <b>self.xxx</b> 直接取。这也是 CUDA Graph 能工作的核心：地址固定。</div>
+
+<hr>
+
+<h2 id="sec8">8. <code>_build_attention_metadata</code> + <code>set_forward_context</code></h2>
+
+<h3>8.1 _build_attention_metadata</h3>
+
+<p>每个 KV cache group（一般只有 1 个）有自己的 attn metadata builder（由 <code>self.attn_groups[gid]</code> 提供），它把扁平张量打包成各 backend 需要的格式：</p>
+
+<pre># gpu_model_runner.py:2183–2350+ 大致结构
+def _build_attention_metadata(self, num_tokens, num_reqs, max_query_len, ..., slot_mappings):
+    attn_metadata: PerLayerAttnMetadata = {}
+    for gid, group_list in enumerate(self.attn_groups):
+        block_table_tensor = self.input_batch.block_table[gid].get_device_tensor(num_reqs_padded)
+        slot_mapping_g    = slot_mappings[gid]
+        common = CommonAttentionMetadata(
+            query_start_loc   = self.query_start_loc.gpu[: num_reqs + 1],
+            seq_lens          = self.seq_lens[:num_reqs],
+            num_reqs          = num_reqs,
+            num_actual_tokens = num_tokens,
+            max_query_len     = max_query_len,
+            block_table_tensor = block_table_tensor,
+            slot_mapping       = slot_mapping_g,
+            ...
+        )
+        for attn_group in group_list:
+            builder = attn_group.get_metadata_builder(...)
+            backend_meta = builder.build(common)          # FlashAttn / FlashInfer 各自的元数据
+            for layer_name in attn_group.layer_names:
+                attn_metadata[layer_name] = backend_meta
+    return attn_metadata, spec_decode_common_attn_metadata</pre>
+
+<div class="note"><b>核心结果</b>：一个 <code>dict[layer_name → AttentionMetadata]</code>。Qwen3 有 36 层，对应 36 个 key。同一个 KV cache group 的层共享同一个 metadata 对象（节省构造开销）。</div>
+
+<h3>8.2 set_forward_context</h3>
+
+<p><code class="ref">forward_context.py:128–180</code>：</p>
+<pre>@dataclass
+class ForwardContext:
+    no_compile_layers: dict[str, Any]
+    attn_metadata: dict[str, AttentionMetadata] | list[dict[str, AttentionMetadata]]
+    slot_mapping: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]]
+    dp_metadata: DPMetadata | None = None
+    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE
+    batch_descriptor: BatchDescriptor | None = None
+    ubatch_slices: UBatchSlices | None = None
+    skip_compiled: bool = False
+    all_moe_layers: list[str] | None = None
+    moe_layer_index: int = 0
+    additional_kwargs: dict[str, Any] = field(default_factory=dict)</pre>
+
+<p><code class="ref">forward_context.py:249–323</code> — 它就是个 <code>@contextmanager</code>：</p>
+<pre>@contextmanager
+def set_forward_context(
+    attn_metadata, vllm_config,
+    num_tokens=None, num_tokens_across_dp=None,
+    cudagraph_runtime_mode=CUDAGraphMode.NONE,
+    batch_descriptor=None, ubatch_slices=None,
+    slot_mapping=None, skip_compiled=False,
+):
+    # DP 元数据自动生成（如果 DP > 1 且 MoE）
+    dp_metadata = ...
+
+    # 让 platform 插入额外 kwargs（NCCL 通信等）
+    additional_kwargs = current_platform.set_additional_forward_context(...)
+
+    forward_context = create_forward_context(
+        attn_metadata, vllm_config, dp_metadata,
+        cudagraph_runtime_mode, batch_descriptor, ubatch_slices,
+        slot_mapping, additional_kwargs, skip_compiled,
+    )
+
+    try:
+        with override_forward_context(forward_context):       # 写入全局 _forward_context
+            yield                                              # 模型 forward 在这里
+    finally:
+        # 退出时恢复上一个 context
+        ...</pre>
+
+<pre># :240–246
+@contextmanager
+def override_forward_context(forward_context):
+    global _forward_context
+    prev_context = _forward_context
+    _forward_context = forward_context
+    try:
+        yield
+    finally:
+        _forward_context = prev_context</pre>
+
+<p>"<b>全局变量</b>"听起来 hack，但因为：</p>
+<ul>
+<li>每个 worker 是独立进程；</li>
+<li>每个进程同一时刻只有一个 forward；</li>
+<li>整个 <code>with</code> 块是同步的；</li>
+</ul>
+<p>所以这种"侧信道传参"是安全的——而且对 <code>torch.compile</code> 友好（签名不变就不会重编）。</p>
+
+<hr>
+
+<h2 id="sec9">9. <code>_model_forward</code> 与 Attention 层如何"暗中"拿元数据</h2>
+
+<h3>9.1 model_runner 这一头</h3>
+
+<pre># gpu_model_runner.py:~3692（_model_forward 的核心）
+return self.model(
+    input_ids=input_ids,                          # [num_tokens_padded]   int32
+    positions=positions,                          # [num_tokens_padded]   int64
+    intermediate_tensors=intermediate_tensors,    # PP 中间 rank 才非空
+    inputs_embeds=inputs_embeds,                  # 多模态/prompt embed 才非空
+    **model_kwargs,
+)</pre>
+
+<h3>9.2 Qwen3Model.forward 这一头</h3>
+<p><code class="ref">qwen2.py:389–426</code>（Qwen3 继承自 Qwen2）：</p>
+<pre>def forward(self, input_ids, positions,
+            intermediate_tensors=None, inputs_embeds=None):
+    if get_pp_group().is_first_rank:
+        if inputs_embeds is not None:
+            hidden_states = inputs_embeds
+        else:
+            hidden_states = self.embed_input_ids(input_ids)    # [N, H]
+        residual = None
+    else:
+        hidden_states = intermediate_tensors["hidden_states"]
+        residual      = intermediate_tensors["residual"]
+
+    aux_hidden_states = self._maybe_add_hidden_state([], 0, hidden_states, residual)
+    for idx, layer in enumerate(islice(self.layers, self.start_layer, self.end_layer)):
+        hidden_states, residual = layer(positions, hidden_states, residual)
+        ...
+    if not get_pp_group().is_last_rank:
+        return IntermediateTensors({"hidden_states": hidden_states, "residual": residual})
+
+    hidden_states, _ = self.norm(hidden_states, residual)
+    return hidden_states           # [N, H]</pre>
+
+<p><b>注意</b>：整个签名里<b>没有</b> <code>attn_metadata</code>、<code>kv_cache</code>、<code>slot_mapping</code>。它们去哪了？</p>
+
+<h3>9.3 Attention 层 forward 内部（侧信道在这里取出来）</h3>
+
+<p><code class="ref">vllm/model_executor/layers/attention/attention.py:437–529</code>：</p>
+<pre>def forward(self, query, key, value, output_shape=None):
+    """
+    The KV cache is stored inside this class and is accessed via `self.kv_cache`.
+    Attention metadata (`attn_metadata`) is set using a context manager in
+    the model runner's `execute_model` method. It is accessed via forward context
+    using `vllm.forward_context.get_forward_context().attn_metadata`.
+    """
+    ...
+    # reshape: [N, H] → [N, num_heads, head_size]
+    query = query.view(-1, self.num_heads,    self.head_size)
+    key   = key.view(-1,   self.num_kv_heads, self.head_size)
+    value = value.view(-1, self.num_kv_heads, self.head_size_v)
+
+    if self.use_direct_call:
+        unified_attention_with_output(
+            query, key, value, output,
+            self.layer_name,        # ← 关键：用 layer_name 找自己的 metadata
+            kv_cache_dummy_dep=kv_cache_dummy_dep,
+        )
+    else:
+        torch.ops.vllm.unified_attention_with_output(
+            query, key, value, output, _encode_layer_name(self.layer_name),
+            kv_cache_dummy_dep=kv_cache_dummy_dep,
+        )
+    return output.view(-1, hidden_size)</pre>
+
+<p><code>unified_attention_with_output</code>（同文件 <code class="ref">:734–762</code>）里头：</p>
+<pre>def unified_attention_with_output(query, key, value, output, layer_name, kv_cache_dummy_dep=None):
+    attn_metadata, self_layer, kv_cache, layer_slot_mapping = get_attention_context(layer_name)
+    ...
+    self_layer.impl.forward(
+        self_layer, query, key, value, kv_cache, attn_metadata,
+        output=output, ...
+    )</pre>
+
+<p>而 <code>get_attention_context</code>（<code class="ref">:660–688</code>）就是：</p>
+<pre>def get_attention_context(layer_name):
+    forward_context: ForwardContext = get_forward_context()    # 全局拿
+    attn_metadata_raw = forward_context.attn_metadata
+    if isinstance(attn_metadata_raw, dict):
+        attn_metadata = attn_metadata_raw[layer_name]          # ← 按 layer 取自己那份
+    elif isinstance(attn_metadata_raw, list):
+        attn_metadata = attn_metadata_raw[0][layer_name]
+    else:
+        attn_metadata = attn_metadata_raw
+
+    attn_layer  = static_forward_context[layer_name]           # ← 取到 self
+    kv_cache    = attn_layer.kv_cache[...]                     # ← 取到 KV 张量 (bind_kv_cache 注册的)
+    layer_slot_mapping = forward_context.slot_mapping[...]
+    return attn_metadata, attn_layer, kv_cache, layer_slot_mapping</pre>
+
+<svg viewBox="0 0 1100 320" width="100%" style="max-width:1100px">
+  <g font-family="JetBrains Mono" font-size="12" fill="#e6e8ee" text-anchor="middle">
+    <rect x="20" y="20" width="220" height="80" rx="8" fill="#152018" stroke="#9ece6a"/>
+    <text x="130" y="46" fill="#9ece6a">execute_model</text>
+    <text x="130" y="66" font-size="11" fill="#9aa0ad">_build_attention_metadata()</text>
+    <text x="130" y="82" font-size="11" fill="#9aa0ad">→ dict[layer_name→meta]</text>
+
+    <line x1="240" y1="60" x2="290" y2="60" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="290" y="20" width="240" height="80" rx="8" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="410" y="46" fill="#bb9af7">set_forward_context(...)</text>
+    <text x="410" y="66" font-size="11" fill="#9aa0ad">写全局 _forward_context</text>
+    <text x="410" y="82" font-size="11" fill="#9aa0ad">enter `with` block</text>
+
+    <line x1="530" y1="60" x2="580" y2="60" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="580" y="20" width="240" height="80" rx="8" fill="#0f1c2a" stroke="#7aa2f7"/>
+    <text x="700" y="46" fill="#7aa2f7">self.model(...)</text>
+    <text x="700" y="66" font-size="11" fill="#9aa0ad">Qwen3 forward</text>
+    <text x="700" y="82" font-size="11" fill="#9aa0ad">signature 干干净净</text>
+
+    <line x1="700" y1="100" x2="700" y2="150" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="560" y="150" width="280" height="80" rx="8" fill="#1c2030" stroke="#e0af68"/>
+    <text x="700" y="176" fill="#e0af68">Qwen3Attention.forward</text>
+    <text x="700" y="196" font-size="11" fill="#9aa0ad">qkv_proj → split → q/k-norm → RoPE</text>
+    <text x="700" y="212" font-size="11" fill="#9aa0ad">→ self.attn(q,k,v)</text>
+
+    <line x1="700" y1="230" x2="700" y2="270" stroke="#9aa0ad" marker-end="url(#ar3)"/>
+
+    <rect x="500" y="270" width="400" height="40" rx="8" fill="#1c2030" stroke="#f7768e"/>
+    <text x="700" y="295" fill="#f7768e">unified_attention_with_output(layer_name=...)</text>
+
+    <line x1="500" y1="290" x2="240" y2="290" stroke="#9aa0ad" stroke-dasharray="3,2" marker-end="url(#ar3)"/>
+
+    <rect x="20" y="270" width="220" height="40" rx="8" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="130" y="295" fill="#bb9af7">get_forward_context()</text>
+
+    <line x1="130" y1="270" x2="130" y2="100" stroke="#bb9af7" stroke-dasharray="3,2" marker-end="url(#ar3)"/>
+  </g>
+</svg>
+<p class="cap">虚线表示"侧信道"——通过全局变量在不同栈帧之间传值。</p>
+
+<hr>
+
+<h2 id="sec10">10. <code>sample_tokens</code> 与 <code>ModelRunnerOutput</code></h2>
+
+<p><code>execute_model</code> 最后存了一个 <code>ExecuteModelState</code> 并 <code>return None</code>。EngineCore 接着调 <code>sample_tokens(grammar_output)</code>：</p>
+
+<pre># gpu_model_runner.py:4319–4355
+@torch.inference_mode
+def sample_tokens(self, grammar_output):
+    if self.execute_model_state is None:
+        # PP 非最后一个 rank / kv connector 直通分支
+        ...
+        return None
+    (scheduler_output, logits, spec_decode_metadata,
+     spec_decode_common_attn_metadata, hidden_states,
+     sample_hidden_states, aux_hidden_states,
+     ec_connector_output, cudagraph_stats, slot_mappings) = self.execute_model_state
+    self.execute_model_state = None
+    ...</pre>
+
+<h3>10.1 调采样器</h3>
+<pre># gpu_model_runner._sample 大致：
+def _sample(self, logits, spec_decode_metadata, ...):
+    if spec_decode_metadata is None:
+        sampler_output = self.sampler(logits, self.input_batch.sampling_metadata)
+    else:
+        sampler_output = self.rejection_sampler(
+            spec_decode_metadata, logits, self.input_batch.sampling_metadata, ...
+        )
+    return sampler_output</pre>
+
+<p>Sampler 步骤（<code class="ref">sampler.py:67–144</code>）：</p>
+<pre>def forward(self, logits, sampling_metadata, ...):
+    # 1) 计算原始 logprobs（如需要）
+    raw_logprobs = self.compute_logprobs(logits) if num_logprobs else None
+
+    # 2) float32 提升精度
+    logits = logits.to(torch.float32)
+
+    # 3) 应用 logits processors（bad_words / min_tokens / 自定义 ...）
+    logits = self.apply_logits_processors(logits, sampling_metadata, predict_bonus_token)
+
+    # 4) 采样 (内部依次做 penalty / temperature / min_p / top-k / top-p)
+    sampled, processed_logprobs = self.sample(logits, sampling_metadata)
+    sampled = sampled.long()
+
+    # 5) 收集 top-k logprobs（可选）
+    logprobs_tensors = self.gather_logprobs(raw_logprobs, num_logprobs, token_ids=sampled)
+
+    return SamplerOutput(
+        sampled_token_ids=sampled.unsqueeze(-1),    # [num_reqs, 1]
+        logprobs_tensors=logprobs_tensors,
+    )</pre>
+
+<h3>10.2 _bookkeeping_sync → ModelRunnerOutput</h3>
+<pre># gpu_model_runner.py:4480–4541
+with record_function_or_nullcontext("gpu_model_runner: bookkeep"):
+    (num_nans_in_logits, logprobs_lists, valid_sampled_token_ids,
+     prompt_logprobs_dict, req_ids_output_copy,
+     req_id_to_index_output_copy, invalid_req_indices) = self._bookkeeping_sync(
+        scheduler_output, sampler_output, logits, hidden_states,
+        scheduler_output.total_num_scheduled_tokens,
+    )
+
+# 异步 spec decode 中可能还要 propose drafts ...
+
+with record_function_or_nullcontext("gpu_model_runner: ModelRunnerOutput"):
+    output = ModelRunnerOutput(
+        req_ids                = req_ids_output_copy,
+        req_id_to_index        = req_id_to_index_output_copy,
+        sampled_token_ids      = valid_sampled_token_ids,   # list[list[int]]
+        logprobs               = logprobs_lists,
+        prompt_logprobs_dict   = prompt_logprobs_dict,
+        kv_connector_output    = kv_connector_output,
+        ec_connector_output    = ec_connector_output if self.supports_mm_inputs else None,
+        num_nans_in_logits     = num_nans_in_logits,
+        cudagraph_stats        = cudagraph_stats,
+        routed_experts         = None,
+    )
+return output</pre>
+
+<p><b><code>_bookkeeping_sync</code></b> 干的最重要的事是<b>把采样结果写回持久态</b>：</p>
+<ul>
+<li>把 <code>sampled_token_ids</code> 追加到 <code>input_batch.token_ids_cpu</code> 对应位置</li>
+<li>把 <code>num_computed_tokens_cpu += num_scheduled_tokens</code></li>
+<li>过滤掉 chunked-prefill 还没完事的 req 的"伪采样"</li>
+<li>组装 <code>logprobs_lists</code>（按 req 拆开）</li>
+</ul>
+
+<p><b><code>ModelRunnerOutput</code></b>（<code class="ref">v1/outputs.py:232–280</code>）：</p>
+<pre>@dataclass
+class ModelRunnerOutput:
+    req_ids: list[str]                                # [num_reqs]
+    req_id_to_index: dict[str, int]
+    sampled_token_ids: list[list[int]]                # 每 req 本步出的 token (可能 > 1, 投机解码)
+    logprobs: LogprobsLists | None = None
+    prompt_logprobs_dict: dict[str, LogprobsTensors | None] = field(default_factory=dict)
+    pooler_output: list[torch.Tensor | None] | None = None
+    kv_connector_output: KVConnectorOutput | None = None
+    ec_connector_output: ECConnectorOutput | None = None
+    num_nans_in_logits: dict[str, int] | None = None
+    cudagraph_stats: CUDAGraphStat | None = None
+    routed_experts: ... = None</pre>
+
+<p>这个对象会被序列化（ZMQ）回 EngineCore，Scheduler 下一步基于它决定哪些 req 完成、是否要释放 KV block、新调度谁。</p>
+
+<hr>
+
+<h2 id="sec11">11. 一次完整 step 的时序</h2>
+
+<svg viewBox="0 0 1100 480" width="100%" style="max-width:1100px">
+  <defs>
+    <marker id="ar5" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa0ad"/>
+    </marker>
+  </defs>
+  <g font-family="JetBrains Mono" font-size="11" fill="#e6e8ee">
+    <line x1="120" y1="40" x2="120" y2="460" stroke="#262a35"/>
+    <line x1="360" y1="40" x2="360" y2="460" stroke="#262a35"/>
+    <line x1="620" y1="40" x2="620" y2="460" stroke="#262a35"/>
+    <line x1="900" y1="40" x2="900" y2="460" stroke="#262a35"/>
+
+    <text x="120" y="32" text-anchor="middle" fill="#7aa2f7">EngineCore</text>
+    <text x="360" y="32" text-anchor="middle" fill="#bb9af7">ModelRunner</text>
+    <text x="620" y="32" text-anchor="middle" fill="#9ece6a">Qwen3 model</text>
+    <text x="900" y="32" text-anchor="middle" fill="#e0af68">Sampler</text>
+
+    <rect x="60" y="50" width="120" height="30" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="120" y="70" text-anchor="middle">schedule()</text>
+    <line x1="180" y1="65" x2="300" y2="65" stroke="#9aa0ad" marker-end="url(#ar5)"/>
+    <text x="240" y="58" text-anchor="middle" fill="#9aa0ad">SchedulerOutput</text>
+
+    <rect x="300" y="50" width="120" height="30" fill="#152018" stroke="#9ece6a"/>
+    <text x="360" y="70" text-anchor="middle">execute_model</text>
+
+    <rect x="280" y="100" width="160" height="20" fill="#1c2030" stroke="#9aa0ad" stroke-dasharray="2,2"/>
+    <text x="360" y="115" text-anchor="middle" font-size="10">_update_states</text>
+
+    <rect x="280" y="130" width="160" height="20" fill="#1c2030" stroke="#9aa0ad" stroke-dasharray="2,2"/>
+    <text x="360" y="145" text-anchor="middle" font-size="10">_prepare_inputs</text>
+
+    <rect x="280" y="160" width="160" height="20" fill="#1c2030" stroke="#9aa0ad" stroke-dasharray="2,2"/>
+    <text x="360" y="175" text-anchor="middle" font-size="10">_build_attention_metadata</text>
+
+    <rect x="280" y="190" width="160" height="20" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="360" y="205" text-anchor="middle" font-size="10">set_forward_context</text>
+
+    <line x1="440" y1="220" x2="560" y2="220" stroke="#9aa0ad" marker-end="url(#ar5)"/>
+
+    <rect x="560" y="210" width="120" height="40" fill="#1c2030" stroke="#9ece6a"/>
+    <text x="620" y="225" text-anchor="middle" font-size="10">36 × Qwen3DecoderLayer</text>
+    <text x="620" y="240" text-anchor="middle" font-size="10" fill="#9aa0ad">paged attention</text>
+
+    <line x1="620" y1="260" x2="620" y2="280" stroke="#9aa0ad"/>
+    <text x="700" y="275" font-size="10" fill="#9aa0ad">hidden_states [N,H]</text>
+
+    <line x1="560" y1="290" x2="440" y2="290" stroke="#9aa0ad" marker-end="url(#ar5)"/>
+
+    <rect x="280" y="290" width="160" height="20" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="360" y="305" text-anchor="middle" font-size="10">hidden_states[logits_indices]</text>
+
+    <rect x="280" y="320" width="160" height="20" fill="#1f152a" stroke="#bb9af7"/>
+    <text x="360" y="335" text-anchor="middle" font-size="10">compute_logits → [num_reqs, V]</text>
+
+    <line x1="440" y1="345" x2="840" y2="345" stroke="#9aa0ad" marker-end="url(#ar5)"/>
+    <rect x="840" y="335" width="120" height="20" fill="#2a2310" stroke="#e0af68"/>
+    <text x="900" y="350" text-anchor="middle" font-size="10">sampler.forward</text>
+
+    <line x1="840" y1="375" x2="440" y2="375" stroke="#9aa0ad" marker-end="url(#ar5)"/>
+    <text x="700" y="370" text-anchor="middle" font-size="10" fill="#9aa0ad">sampled_token_ids</text>
+
+    <rect x="280" y="385" width="160" height="20" fill="#152018" stroke="#9ece6a"/>
+    <text x="360" y="400" text-anchor="middle" font-size="10">_bookkeeping_sync</text>
+
+    <rect x="280" y="415" width="160" height="20" fill="#152018" stroke="#9ece6a"/>
+    <text x="360" y="430" text-anchor="middle" font-size="10">ModelRunnerOutput</text>
+
+    <line x1="280" y1="425" x2="180" y2="425" stroke="#9aa0ad" marker-end="url(#ar5)"/>
+    <rect x="60" y="415" width="120" height="20" fill="#1c2030" stroke="#7aa2f7"/>
+    <text x="120" y="430" text-anchor="middle" font-size="10">update_from_output</text>
+  </g>
+</svg>
+
+<hr>
+
+<h2>12. 总结：12 句话记住整个 model runner</h2>
+
+<ol>
+<li>vLLM 把"<b>调度</b>"和"<b>跑模型</b>"分开：Scheduler 决策、ModelRunner 执行。</li>
+<li>启动一次性：<code>load_model</code>（参数进 GPU）→ <code>profile_run</code>（量峰值）→ <code>initialize_kv_cache</code>（建分页池）→ <code>capture_model</code>（CUDA Graph）。</li>
+<li>持久态：<code>self.requests</code> 存所有活跃 req 的完整状态；<code>self.input_batch</code> 存"当前要跑"的 req 的紧凑视图。</li>
+<li>所有 GPU 张量都是<b>预分配</b>的、每步在前缀写新数据——为了 CUDA Graph 能复用地址。</li>
+<li><code>_update_states</code> 把 SchedulerOutput 翻译成 <code>input_batch</code> 的增删改；不动 GPU 张量。</li>
+<li><code>_prepare_inputs</code> 是核心：用 numpy 算 <code>req_indices / positions / token_indices</code>，<code>torch.index_select</code> 把 token id 抽出来，再 H2D。</li>
+<li>关键扁平张量：<code>input_ids[N]、positions[N]、query_start_loc[R+1]、seq_lens[R]、slot_mapping[N]、block_table[R, max_blocks]、logits_indices[R]</code>。</li>
+<li><code>slot_mapping</code> 是<b>写地图</b>（K/V 写到 KV 池哪里），<code>block_table</code> 是<b>读地图</b>（attention 读哪些 block）。</li>
+<li><code>_build_attention_metadata</code> 把上面这堆 wrap 成 <code>dict[layer_name → AttentionMetadata]</code>。</li>
+<li><code>set_forward_context</code> 把 metadata 写进全局变量；模型 forward 不变签名，attention 层在内部用 <code>get_forward_context()</code> + <code>layer_name</code> 取自己那份。</li>
+<li>forward 完后 <code>hidden_states[logits_indices]</code> 抽出"要采样的位置" → <code>compute_logits</code> → <code>sampler</code>。</li>
+<li><code>_bookkeeping_sync</code> 把 sampled token 写回 <code>input_batch</code>，把 <code>num_computed_tokens</code> 推进；返回 <code>ModelRunnerOutput</code> 给 Scheduler，开始下一轮。</li>
+</ol>
+
+<p class="small">理解了这 12 点，再去看 multimodal encoder、speculative decoding、PP 跨 rank 通信、async scheduling、KV connector，本质都是在上面这条流水线的某个环节"插入额外步骤"，主线骨架不变。</p>
+
+<script src="./nav.js" defer></script>
+</body>
+</html>
