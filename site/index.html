@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepSeek-V3 FusedMoE / EP / EPLB 代码导读</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5e6b7a;
+      --line: #d9e0ea;
+      --code-bg: #10151f;
+      --code-ink: #d9e7ff;
+      --blue: #2d6cdf;
+      --green: #1f8a70;
+      --orange: #bd6b13;
+      --red: #b94747;
+      --violet: #7257c7;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      padding: 32px 40px 24px;
+      background: #111827;
+      color: white;
+    }
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    header p { margin: 4px 0; color: #c9d4e3; max-width: 1100px; }
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 60px;
+    }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      margin: 0 0 20px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      background: #eef2f7;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-size: 13px;
+      line-height: 1.52;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+      font-size: inherit;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+    th { background: #f0f4f9; text-align: left; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .note {
+      border-left: 4px solid var(--blue);
+      background: #eef5ff;
+      padding: 10px 12px;
+      border-radius: 6px;
+      color: #1c314f;
+    }
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7eb;
+      color: #4f310f;
+    }
+    .formula {
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+    .diagram {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      margin: 12px 0;
+    }
+    svg { display: block; min-width: 980px; }
+    .box { fill: white; stroke: #9aa8ba; stroke-width: 1.2; rx: 8; }
+    .box-blue { fill: #edf4ff; stroke: var(--blue); }
+    .box-green { fill: #edf9f5; stroke: var(--green); }
+    .box-orange { fill: #fff4e5; stroke: var(--orange); }
+    .box-violet { fill: #f3efff; stroke: var(--violet); }
+    .box-red { fill: #fff0f0; stroke: var(--red); }
+    .arrow { stroke: #405166; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .small { color: var(--muted); font-size: 13px; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin: 10px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: #fff;
+    }
+    .toc {
+      columns: 2;
+      padding-left: 18px;
+    }
+    .toc li { break-inside: avoid; margin: 4px 0; }
+    @media (max-width: 860px) {
+      header { padding: 24px 18px; }
+      main { padding: 18px 12px 44px; }
+      section { padding: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .toc { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DeepSeek-V3 的 FusedMoE、EP、大 EP 与 EPLB：按 vLLM 代码核对</h1>
+    <p>目标：先把数学和 shape 讲清楚，再把每一步落到当前仓库的代码路径。重点不是“概念上 MoE 怎么工作”，而是 vLLM 里数据实际怎样从 router、expert map、all2all、kernel、EPLB map 流过。</p>
+    <p class="small">DeepSeek-V3-0324 配置核对：H=7168，MoE I=2048，61 层，其中前 3 层 dense，256 routed experts，1 shared expert，top-8，8 expert groups，top-4 groups，sigmoid + noaux_tc correction bias。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>目录</h2>
+      <ol class="toc">
+        <li><a href="#symbols">符号与 DeepSeek-V3 shape</a></li>
+        <li><a href="#math">数学原理</a></li>
+        <li><a href="#arch">整体架构图</a></li>
+        <li><a href="#deepseek-code">DeepSeek-V3 MoE 入口代码</a></li>
+        <li><a href="#fusedmoe-code">FusedMoE 层内部</a></li>
+        <li><a href="#routing-code">Grouped Top-K 路由</a></li>
+        <li><a href="#kernel-flow">Kernel 数据流与 shape</a></li>
+        <li><a href="#ep">EP 怎么实现</a></li>
+        <li><a href="#large-ep">大 EP 是什么</a></li>
+        <li><a href="#eplb">EPLB 与冗余专家</a></li>
+        <li><a href="#checklist">核对清单</a></li>
+      </ol>
+    </section>
+
+    <section id="symbols">
+      <h2>1. 符号与 DeepSeek-V3 Shape</h2>
+      <table>
+        <tr><th>符号</th><th>含义</th><th>DeepSeek-V3-0324 常用值</th><th>vLLM 代码字段</th></tr>
+        <tr><td><code>T</code></td><td>当前 forward 中 token 数，prefill 是批内 token 总数，decode 常接近 batch size</td><td>运行时动态</td><td><code>hidden_states.shape[0]</code></td></tr>
+        <tr><td><code>H</code></td><td>hidden size</td><td>7168</td><td><code>config.hidden_size</code></td></tr>
+        <tr><td><code>I</code></td><td>每个 routed expert 的 FFN intermediate size</td><td>2048</td><td><code>config.moe_intermediate_size</code></td></tr>
+        <tr><td><code>E</code></td><td>logical routed expert 数</td><td>256</td><td><code>config.n_routed_experts</code></td></tr>
+        <tr><td><code>K</code></td><td>每 token 激活 routed expert 数</td><td>8</td><td><code>config.num_experts_per_tok</code></td></tr>
+        <tr><td><code>G</code></td><td>expert group 数</td><td>8</td><td><code>config.n_group</code></td></tr>
+        <tr><td><code>G_top</code></td><td>每 token 先选中的 group 数</td><td>4</td><td><code>config.topk_group</code></td></tr>
+        <tr><td><code>S</code></td><td>shared expert 数</td><td>1</td><td><code>config.n_shared_experts</code></td></tr>
+        <tr><td><code>P</code></td><td>EP rank 数</td><td><code>TP * DP * PCP</code></td><td><code>FusedMoEParallelConfig.ep_size</code></td></tr>
+      </table>
+      <p>默认无 EPLB 时，每个 EP rank 持有 <code>E / P</code> 个 routed experts。比如 <code>TP=1, DP=8</code> 时，<code>P=8</code>，每卡持有 32 个 routed experts。</p>
+      <div class="note">
+        vLLM 中 DeepSeek-V3 和 DeepSeek-R1 都走 <code>vllm/model_executor/models/deepseek_v2.py</code> 这套实现，类名沿用 <code>DeepseekV2*</code>。
+      </div>
+    </section>
+
+    <section id="math">
+      <h2>2. 数学原理</h2>
+      <h3>2.1 Router</h3>
+      <div class="formula">输入:
+  X in R[T, H]
+  W_gate in R[E, H]
+
+router logits:
+  Z = X @ W_gate.T                         # [T, E]
+
+DeepSeek-V3 scoring:
+  S = sigmoid(Z)                           # [T, E]
+  S_select = S + correction_bias           # [T, E], 仅用于选择，不用于最终权重
+
+分组:
+  E = 256, G = 8, group_size = 32
+  对每个 token，每组取 top-2 分数求和作为 group_score
+  group_idx = topk(group_score, G_top=4)
+  在这 4 个 group 覆盖的 experts 中取 top-K=8 experts
+
+路由权重:
+  W = gather(S, topk_ids)                  # [T, K]
+  if norm_topk_prob:
+      W = W / sum(W, axis=-1, keepdim=True)
+  W = W * routed_scaling_factor            # DeepSeek-V3 为 2.5，vLLM 可能等价地延后乘到 output</div>
+
+      <h3>2.2 Expert FFN</h3>
+      <div class="formula">第 e 个 routed expert:
+  W1_e in R[I, H]      # gate projection
+  W3_e in R[I, H]      # up projection
+  W2_e in R[H, I]      # down projection
+
+  expert_e(x) = W2_e @ ( SiLU(W1_e @ x) * (W3_e @ x) )     # R[H]
+
+vLLM 存储:
+  w13_weight[e] = concat(W1_e, W3_e)                        # [2I, H]
+  w2_weight[e]                                              # [H, I]</div>
+
+      <h3>2.3 MoE 输出</h3>
+      <div class="formula">对第 t 个 token:
+  y_routed[t] = sum_{j=1..K} W[t, j] * expert_{topk_ids[t, j]}(X[t])
+
+shared expert:
+  y_shared[t] = shared_mlp(X[t])      # DeepSeek-V3 n_shared_experts=1
+
+最终:
+  Y[t] = y_routed[t] + y_shared[t]</div>
+    </section>
+
+    <section id="arch">
+      <h2>3. 整体架构与数据流图</h2>
+      <div class="diagram">
+        <svg width="1120" height="455" viewBox="0 0 1120 455" role="img" aria-label="DeepSeek-V3 FusedMoE data flow">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <rect class="box box-blue" x="30" y="42" width="145" height="58"></rect>
+          <text x="102" y="65" text-anchor="middle" font-size="14">hidden_states</text>
+          <text x="102" y="86" text-anchor="middle" font-size="13">X [T, 7168]</text>
+
+          <rect class="box box-violet" x="225" y="42" width="165" height="58"></rect>
+          <text x="307" y="65" text-anchor="middle" font-size="14">GateLinear</text>
+          <text x="307" y="86" text-anchor="middle" font-size="13">logits [T, 256]</text>
+
+          <rect class="box box-orange" x="440" y="42" width="230" height="92"></rect>
+          <text x="555" y="63" text-anchor="middle" font-size="14">GroupedTopK</text>
+          <text x="555" y="85" text-anchor="middle" font-size="13">sigmoid + bias</text>
+          <text x="555" y="106" text-anchor="middle" font-size="13">top-4 groups, top-8 experts</text>
+          <text x="555" y="126" text-anchor="middle" font-size="13">weights/ids [T, 8]</text>
+
+          <rect class="box box-green" x="730" y="28" width="170" height="86"></rect>
+          <text x="815" y="52" text-anchor="middle" font-size="14">Routed Experts</text>
+          <text x="815" y="74" text-anchor="middle" font-size="13">w13 [E_local, 4096, H]</text>
+          <text x="815" y="95" text-anchor="middle" font-size="13">w2 [E_local, H, 2048]</text>
+
+          <rect class="box box-green" x="730" y="154" width="170" height="66"></rect>
+          <text x="815" y="181" text-anchor="middle" font-size="14">Shared Expert</text>
+          <text x="815" y="202" text-anchor="middle" font-size="13">1 dense MLP</text>
+
+          <rect class="box box-red" x="955" y="84" width="125" height="80"></rect>
+          <text x="1017" y="111" text-anchor="middle" font-size="14">Add / Reduce</text>
+          <text x="1017" y="133" text-anchor="middle" font-size="13">Y [T, H]</text>
+          <text x="1017" y="152" text-anchor="middle" font-size="12">routed + shared</text>
+
+          <path class="arrow" d="M175 71 H225"></path>
+          <path class="arrow" d="M390 71 H440"></path>
+          <path class="arrow" d="M670 88 C700 88 700 71 730 71"></path>
+          <path class="arrow" d="M175 88 C355 210 545 197 730 187"></path>
+          <path class="arrow" d="M900 72 C925 72 925 104 955 116"></path>
+          <path class="arrow" d="M900 188 C930 188 930 150 955 137"></path>
+
+          <rect class="box" x="45" y="284" width="1030" height="130"></rect>
+          <text x="70" y="312" font-size="14" font-weight="600">Shape 变化主线</text>
+          <text x="70" y="340" font-size="13">X: [T, 7168]</text>
+          <text x="230" y="340" font-size="13">logits: [T, 256]</text>
+          <text x="415" y="340" font-size="13">topk_weights/topk_ids: [T, 8]</text>
+          <text x="680" y="340" font-size="13">expert output cache: 近似 [T, 8, 7168]</text>
+          <text x="70" y="374" font-size="13">kernel 内按 expert 对 token 排序/补齐: sorted_token_ids, expert_ids, num_tokens_post_padded</text>
+          <text x="70" y="398" font-size="13">最后按 token 聚合 top-8 expert 输出，再和 shared expert 输出相加。</text>
+        </svg>
+      </div>
+    </section>
+
+    <section id="deepseek-code">
+      <h2>4. DeepSeek-V3 MoE 入口代码</h2>
+      <p>DeepSeek 的 MoE wrapper 做三件事：创建 gate，创建 shared expert，创建 <code>FusedMoE</code>。这段是理解所有后续 shape 的起点。</p>
+      <pre><code># vllm/vllm/model_executor/models/deepseek_v2.py:257-352
+self.routed_scaling_factor = getattr(config, "routed_scaling_factor", 1.0)
+
+self.ep_group = get_ep_group().device_group
+self.ep_rank = get_ep_group().rank_in_group
+self.ep_size = self.ep_group.size()
+self.n_routed_experts: int = config.n_routed_experts
+self.n_shared_experts: int = config.n_shared_experts
+
+self.gate = GateLinear(
+    config.hidden_size,
+    config.n_routed_experts,
+    prefix=f"{prefix}.gate",
+)
+if getattr(config, "topk_method", None) == "noaux_tc":
+    self.gate.e_score_correction_bias = nn.Parameter(
+        torch.empty(config.n_routed_experts, dtype=torch.float32)
+    )
+
+intermediate_size = config.moe_intermediate_size * config.n_shared_experts
+self.shared_experts = DeepseekV2MLP(
+    hidden_size=config.hidden_size,
+    intermediate_size=intermediate_size,
+    hidden_act=config.hidden_act,
+    quant_config=quant_config,
+    is_sequence_parallel=self.is_sequence_parallel,
+    reduce_results=False,
+    prefix=f"{prefix}.shared_experts",
+)
+
+self.experts = FusedMoE(
+    shared_experts=self.shared_experts,
+    gate=self.gate,
+    num_experts=config.n_routed_experts,
+    top_k=config.num_experts_per_tok,
+    hidden_size=config.hidden_size,
+    intermediate_size=config.moe_intermediate_size,
+    renormalize=config.norm_topk_prob,
+    use_grouped_topk=True,
+    num_expert_group=getattr(config, "n_group", 1),
+    topk_group=getattr(config, "topk_group", 1),
+    scoring_func=getattr(config, "scoring_func", "softmax"),
+    routed_scaling_factor=self.routed_scaling_factor,
+    apply_routed_scale_to_output=not self.is_rocm_aiter_moe_enabled,
+    e_score_correction_bias=self.gate.e_score_correction_bias,
+    enable_eplb=self.enable_eplb,
+    num_redundant_experts=self.n_redundant_experts,
+    n_shared_experts=config.n_shared_experts
+    if self.is_fusion_moe_shared_experts_enabled
+    else None,
+)</code></pre>
+
+      <p>forward 入口里，如果 <code>FusedMoE</code> 持有 gate，则把 <code>hidden_states</code> 同时作为输入和 router 输入传给 <code>FusedMoE</code>；真正的 gate 线性层在 <code>MoERunner</code> 里调用。</p>
+      <pre><code># vllm/vllm/model_executor/models/deepseek_v2.py:362-389
+def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    num_tokens, hidden_dim = hidden_states.shape
+    hidden_states = hidden_states.view(-1, hidden_dim)
+
+    if self.is_sequence_parallel:
+        hidden_states = sequence_parallel_chunk(hidden_states)
+
+    if self.experts.is_internal_router:
+        final_hidden_states = self.experts(
+            hidden_states=hidden_states, router_logits=hidden_states
+        )
+    else:
+        router_logits, _ = self.gate(hidden_states)
+        final_hidden_states = self.experts(
+            hidden_states=hidden_states, router_logits=router_logits
+        )
+
+    if self.is_sequence_parallel:
+        final_hidden_states = tensor_model_parallel_all_gather(
+            final_hidden_states, 0
+        )
+        final_hidden_states = final_hidden_states[:num_tokens]
+
+    return final_hidden_states.view(num_tokens, hidden_dim)</code></pre>
+    </section>
+
+    <section id="fusedmoe-code">
+      <h2>5. FusedMoE 层内部</h2>
+      <h3>5.1 并行配置决定 local expert 数</h3>
+      <p><code>FusedMoE</code> 初始化时先构造 <code>FusedMoEParallelConfig</code>，再用 <code>ExpertMapManager</code> 决定当前 rank 拥有哪些专家。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/layer.py:172-183, 240-259
+self.moe_parallel_config: FusedMoEParallelConfig = FusedMoEParallelConfig.make(
+    tp_size_=tp_size_,
+    pcp_size_=pcp_size_,
+    dp_size_=dp_size_,
+    sp_size_=self.sp_size,
+    vllm_parallel_config=vllm_config.parallel_config,
+)
+
+self.global_num_experts = num_experts + num_redundant_experts
+self.logical_num_experts = num_experts
+
+self.expert_map_manager = ExpertMapManager(
+    max_num_batched_tokens=max_num_batched_tokens,
+    top_k=top_k,
+    global_num_experts=self.global_num_experts,
+    num_redundant_experts=num_redundant_experts,
+    num_expert_group=num_expert_group,
+    moe_parallel_config=self.moe_parallel_config,
+    placement_strategy=self.expert_placement_strategy,
+    enable_eplb=enable_eplb,
+    num_fused_shared_experts=self.num_fused_shared_experts,
+    rocm_aiter_enabled=self.rocm_aiter_fmoe_enabled,
+)
+self.update_expert_map_info()</code></pre>
+
+      <h3>5.2 FusedMoE 的权重 shape</h3>
+      <p>非量化路径下，w1/w3 被拼成 <code>w13_weight</code>，这也是很多 FusedMoE kernel 的核心输入格式。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/unquantized_fused_moe_method.py:90-133
+if self.moe.is_act_and_mul:
+    w13_up_dim = 2 * intermediate_size_per_partition
+else:
+    w13_up_dim = intermediate_size_per_partition
+
+w13_weight = torch.nn.Parameter(
+    torch.empty(
+        num_experts,
+        w13_up_dim,
+        hidden_size,
+        dtype=params_dtype,
+    ),
+    requires_grad=False,
+)
+layer.register_parameter("w13_weight", w13_weight)
+
+w2_weight = torch.nn.Parameter(
+    torch.empty(
+        num_experts,
+        hidden_size,
+        intermediate_size_per_partition,
+        dtype=params_dtype,
+    ),
+    requires_grad=False,
+)
+layer.register_parameter("w2_weight", w2_weight)</code></pre>
+
+      <table>
+        <tr><th>场景</th><th><code>intermediate_size_per_partition</code></th><th><code>w13_weight</code></th><th><code>w2_weight</code></th></tr>
+        <tr><td>DeepSeek-V3，EP 开启，TP 被 MoE 侧置为 1</td><td>2048</td><td><code>[E_local, 4096, 7168]</code></td><td><code>[E_local, 7168, 2048]</code></td></tr>
+        <tr><td>DeepSeek-V3，EP 关闭，MoE 走 flattened TP</td><td><code>2048 / TP_flat</code></td><td><code>[256, 2I/TP_flat, 7168]</code></td><td><code>[256, 7168, I/TP_flat]</code></td></tr>
+      </table>
+
+      <h3>5.3 Runner 是真正的 forward 编排器</h3>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/layer.py:420-440, 1301-1311
+self.runner: MoERunnerInterface = MoERunner(
+    layer_name=self.layer_name,
+    moe_config=self.moe_config,
+    router=self.router,
+    gate=gate,
+    shared_experts=shared_experts,
+    quant_method=self.quant_method,
+    enable_dbo=self.vllm_config.parallel_config.enable_dbo,
+    routed_scaling_factor=routed_scaling_factor
+    if apply_routed_scale_to_output
+    else 1.0,
+)
+
+def forward(
+    self,
+    hidden_states: torch.Tensor,
+    router_logits: torch.Tensor,
+    input_ids: torch.Tensor | None = None,
+) -> torch.Tensor:
+    return self.runner.forward(hidden_states, router_logits, input_ids)</code></pre>
+    </section>
+
+    <section id="routing-code">
+      <h2>6. Grouped Top-K 路由代码</h2>
+      <p>DeepSeek-V3 的路由在 vLLM 中走 <code>GroupedTopk</code>。关键点：有 <code>e_score_correction_bias</code> 时，biased score 用于选择 expert；最终路由权重仍从原始 sigmoid score 中 gather。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/router/grouped_topk_router.py:111-162
+if scoring_func == "softmax":
+    scores = torch.softmax(gating_output, dim=-1)
+elif scoring_func == "sigmoid":
+    scores = gating_output.sigmoid()
+
+num_token = scores.size(0)
+if e_score_correction_bias is not None:
+    original_scores = scores
+    scores = scores + e_score_correction_bias.unsqueeze(0)
+    group_scores = (
+        scores.view(num_token, num_expert_group, -1).topk(2, dim=-1)[0].sum(dim=-1)
+    )
+else:
+    group_scores = (
+        scores.view(num_token, num_expert_group, -1).max(dim=-1).values
+    )
+
+group_idx = torch.topk(group_scores, k=topk_group, dim=-1, sorted=use_sorted)[1]
+group_mask = torch.zeros_like(group_scores)
+group_mask.scatter_(1, group_idx, 1)
+score_mask = (
+    group_mask.unsqueeze(-1)
+    .expand(num_token, num_expert_group, scores.size(-1) // num_expert_group)
+    .reshape(num_token, -1)
+)
+tmp_scores = scores.masked_fill(~score_mask.bool(), float("-inf"))
+
+if e_score_correction_bias is not None:
+    topk_ids = torch.topk(tmp_scores, k=topk, dim=-1, sorted=use_sorted)[1]
+    topk_weights = original_scores.gather(1, topk_ids)
+else:
+    topk_weights, topk_ids = torch.topk(tmp_scores, k=topk, dim=-1, sorted=use_sorted)
+
+if renormalize:
+    topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+
+if routed_scaling_factor != 1.0:
+    topk_weights = topk_weights * routed_scaling_factor
+return topk_weights.to(torch.float32), topk_ids.to(torch.int32)</code></pre>
+
+      <p>路由结果进入 <code>BaseRouter.select_experts</code> 后，如果启用了 EPLB，会把 logical expert id 改写成 physical expert id。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/router/base_router.py:250-298
+topk_weights, topk_ids = self._compute_routing(
+    hidden_states, router_logits, indices_type, input_ids=input_ids
+)
+
+if self.capture_fn is not None:
+    self.capture_fn(topk_ids)
+
+topk_ids = self._apply_eplb_mapping(topk_ids)
+topk_ids = self._convert_indices_dtype(topk_ids, indices_type)
+return topk_weights, topk_ids</code></pre>
+    </section>
+
+    <section id="kernel-flow">
+      <h2>7. Kernel 数据流与 Shape</h2>
+      <p>Runner 的主线是：可选 input transform，gate，dispatch，router select，quant/expert kernel，combine，shared+routed 相加。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/runner/moe_runner.py:744-801
+def _forward_impl(
+    self,
+    layer: torch.nn.Module,
+    hidden_states: torch.Tensor,
+    router_logits: torch.Tensor,
+    shared_experts_input: torch.Tensor | None,
+    input_ids: torch.Tensor | None = None,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    layer.ensure_moe_quant_config_init()
+    self._maybe_sync_shared_experts_stream(shared_experts_input)
+
+    if self.gate is not None:
+        if self._fse_fuse_gate:
+            self._maybe_fuse_gate_weights()
+            router_logits = F.linear(hidden_states, self._combined_gate_weight)
+        else:
+            router_logits, _ = self.gate(hidden_states)
+
+    with self._sequence_parallel_context():
+        hidden_states, router_logits = self._maybe_dispatch(
+            layer,
+            hidden_states,
+            router_logits,
+        )
+
+        shared_output, hidden_states = self._apply_quant_method(
+            layer=layer,
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+            shared_experts_input=shared_experts_input,
+            input_ids=input_ids,
+        )
+
+        return self._maybe_combine(shared_output, hidden_states)</code></pre>
+
+      <p><code>_apply_quant_method</code> 里先调用 router，再把 <code>topk_weights/topk_ids</code> 交给 quant method 的 kernel。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/runner/moe_runner.py:516-539
+if self._quant_method.is_monolithic:
+    fused_out = self._quant_method.apply_monolithic(
+        layer=layer,
+        x=hidden_states,
+        router_logits=router_logits,
+        input_ids=input_ids,
+    )
+else:
+    topk_weights, topk_ids = self.router.select_experts(
+        hidden_states=hidden_states,
+        router_logits=router_logits,
+        input_ids=input_ids,
+    )
+
+    fused_out = self._quant_method.apply(
+        layer=layer,
+        x=hidden_states,
+        topk_weights=topk_weights,
+        topk_ids=topk_ids,
+        shared_experts=self._shared_experts,
+        shared_experts_input=shared_experts_input,
+    )</code></pre>
+
+      <h3>7.1 Triton kernel 看到的 shape</h3>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/fused_moe.py:347-374
+Key Parameters:
+- A: input tensor, shape (*, K)
+- B: stacked MOE weight tensor, shape (E, N, K)
+- C: output cache tensor, shape (M, topk, N)
+- sorted_token_ids: tokens repeated topk times and sorted by expert
+- expert_ids: expert index for each block
+
+The sorting of sorted_token_ids by expert index and padding ensures
+divisibility by BLOCK_SIZE_M.</code></pre>
+
+      <table>
+        <tr><th>变量</th><th>DeepSeek-V3 语义</th><th>典型 shape</th></tr>
+        <tr><td><code>A</code></td><td>token hidden states</td><td><code>[T_dispatch, 7168]</code></td></tr>
+        <tr><td><code>B=w13_weight</code></td><td>第一段 grouped GEMM，gate/up projection</td><td><code>[E_local, 4096, 7168]</code></td></tr>
+        <tr><td><code>B=w2_weight</code></td><td>第二段 grouped GEMM，down projection</td><td><code>[E_local, 7168, 2048]</code></td></tr>
+        <tr><td><code>topk_weights</code></td><td>每 token 的 expert 权重</td><td><code>[T_dispatch, 8]</code></td></tr>
+        <tr><td><code>topk_ids</code></td><td>每 token 的 expert id，EPLB 后可能是 physical id</td><td><code>[T_dispatch, 8]</code></td></tr>
+        <tr><td><code>sorted_token_ids</code></td><td><code>T_dispatch * K</code> 展开后按 expert 分桶并补齐</td><td><code>[num_tokens_post_padded]</code></td></tr>
+      </table>
+    </section>
+
+    <section id="ep">
+      <h2>8. EP 怎么实现</h2>
+      <h3>8.1 进程组：EP = TP × DP × PCP</h3>
+      <p>开启 EP 后，MoE 层不再用 TP 切每个 expert 的矩阵，而是让每个 rank 拥有完整的若干 experts。vLLM 的 <code>FusedMoEParallelConfig.make()</code> 明确把 MoE 侧 <code>tp_size</code> 置为 1，并把 flattened TP rank 改成 EP rank。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/config.py:1195-1242
+use_ep = (
+    dp_size_ * pcp_size_ * tp_size_ > 1
+    and vllm_parallel_config.enable_expert_parallel
+)
+
+tp_size, tp_rank = FusedMoEParallelConfig.flatten_tp_across_dp_and_pcp(
+    tp_size_, dp_size_, dp_rank, pcp_size_, pcp_rank
+)
+
+if not use_ep:
+    return FusedMoEParallelConfig(
+        tp_size=tp_size,
+        tp_rank=tp_rank,
+        ep_size=1,
+        ep_rank=0,
+        use_ep=False,
+    )
+
+# DP + EP / TP + EP / DP + TP + EP
+ep_size = tp_size
+ep_rank = tp_rank
+return FusedMoEParallelConfig(
+    tp_size=1,
+    tp_rank=0,
+    ep_size=ep_size,
+    ep_rank=ep_rank,
+    use_ep=True,
+)</code></pre>
+
+      <p>分布式初始化时，EP group 的 rank 维度来自 <code>data_parallel_size * prefill_context_model_parallel_size * tensor_model_parallel_size</code>。</p>
+      <pre><code># vllm/vllm/distributed/parallel_state.py:1682-1708
+if config.model_config is None or config.model_config.is_moe:
+    group_ranks = (
+        all_ranks.transpose(1, 2)
+        .reshape(
+            -1,
+            data_parallel_size
+            * prefill_context_model_parallel_size
+            * tensor_model_parallel_size,
+        )
+        .unbind(0)
+    )
+    group_ranks = [x.tolist() for x in group_ranks]
+    _EP = init_model_parallel_group(
+        group_ranks, get_world_group().local_rank, backend, group_name="ep"
+    )</code></pre>
+
+      <h3>8.2 Expert map：global id 到 local id</h3>
+      <p>如果 <code>ep_size &gt; 1</code>，<code>expert_map</code> 是 <code>[global_num_experts]</code>，本 rank 拥有的专家映射到 local id，其他专家是 <code>-1</code>。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/expert_map_manager.py:22-113
+base_experts = global_num_experts // ep_size
+remainder = global_num_experts % ep_size
+local_num_experts = base_experts + 1 if ep_rank < remainder else base_experts
+
+expert_map = torch.full((global_num_experts,), -1, dtype=torch.int32)
+
+if expert_placement_strategy == "linear":
+    start_idx = ep_rank * base_experts + min(ep_rank, remainder)
+    expert_map[start_idx : start_idx + local_num_experts] = torch.arange(
+        0, local_num_experts, dtype=torch.int32
+    )
+elif expert_placement_strategy == "round_robin":
+    local_log_experts = torch.arange(
+        ep_rank, global_num_experts, ep_size, dtype=torch.int32
+    )
+    expert_map[local_log_experts] = torch.arange(
+        0, local_num_experts, dtype=torch.int32
+    )</code></pre>
+
+      <div class="diagram">
+        <svg width="1120" height="360" viewBox="0 0 1120 360" role="img" aria-label="Expert parallel data flow">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <rect class="box box-blue" x="40" y="40" width="160" height="68"></rect>
+          <text x="120" y="66" text-anchor="middle" font-size="14">DP/TP rank input</text>
+          <text x="120" y="88" text-anchor="middle" font-size="13">X_local [T_r, H]</text>
+
+          <rect class="box box-orange" x="260" y="40" width="185" height="68"></rect>
+          <text x="352" y="66" text-anchor="middle" font-size="14">dispatch</text>
+          <text x="352" y="88" text-anchor="middle" font-size="13">allgather / all2all</text>
+
+          <rect class="box box-green" x="520" y="20" width="145" height="74"></rect>
+          <text x="592" y="46" text-anchor="middle" font-size="14">EP rank 0</text>
+          <text x="592" y="68" text-anchor="middle" font-size="12">experts 0..31</text>
+          <rect class="box box-green" x="520" y="112" width="145" height="74"></rect>
+          <text x="592" y="138" text-anchor="middle" font-size="14">EP rank 1</text>
+          <text x="592" y="160" text-anchor="middle" font-size="12">experts 32..63</text>
+          <rect class="box box-green" x="520" y="204" width="145" height="74"></rect>
+          <text x="592" y="230" text-anchor="middle" font-size="14">...</text>
+          <text x="592" y="252" text-anchor="middle" font-size="12">EP rank P-1</text>
+
+          <rect class="box box-violet" x="735" y="86" width="170" height="80"></rect>
+          <text x="820" y="113" text-anchor="middle" font-size="14">local grouped GEMM</text>
+          <text x="820" y="135" text-anchor="middle" font-size="13">只算本 rank experts</text>
+          <text x="820" y="155" text-anchor="middle" font-size="12">非本地 id 被过滤/转发</text>
+
+          <rect class="box box-red" x="960" y="95" width="120" height="60"></rect>
+          <text x="1020" y="120" text-anchor="middle" font-size="14">combine</text>
+          <text x="1020" y="142" text-anchor="middle" font-size="13">Y_local [T_r,H]</text>
+
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M200 74 H260"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M445 74 C475 74 485 57 520 57"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M445 74 C480 95 485 149 520 149"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M445 74 C480 125 485 241 520 241"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M665 57 C705 70 710 100 735 116"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M665 149 C700 145 710 133 735 128"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M665 241 C705 210 710 165 735 145"></path>
+          <path class="arrow" style="marker-end:url(#arrow2)" d="M905 126 H960"></path>
+          <text x="45" y="320" font-size="13">默认 AgRs: dispatch 是 all_gatherv，combine 是 reduce_scatterv。DeepEP/NIXL/FlashInfer 后端会把 token 按 topk_ids 直接发到 expert owner，减少无效计算和拷贝。</text>
+        </svg>
+      </div>
+
+      <h3>8.3 默认 dispatch/combine 代码</h3>
+      <pre><code># vllm/vllm/distributed/device_communicators/all2all.py:50-137
+def dispatch(
+    self,
+    hidden_states: torch.Tensor,
+    topk_weights: torch.Tensor,
+    topk_ids: torch.Tensor,
+    is_sequence_parallel: bool = False,
+    extra_tensors: list[torch.Tensor] | None = None,
+):
+    dp_metadata = get_forward_context().dp_metadata
+    sizes = dp_metadata.get_chunk_sizes_across_dp_rank()
+    dist_group = get_ep_group() if is_sequence_parallel else get_dp_group()
+
+    tensors_to_gather = [hidden_states, topk_weights, topk_ids]
+    gathered_tensors = dist_group.all_gatherv(
+        tensors_to_gather,
+        dim=0,
+        sizes=sizes,
+    )
+    return gathered_tensors[0], gathered_tensors[1], gathered_tensors[2]
+
+def combine(self, hidden_states: torch.Tensor, is_sequence_parallel: bool = False):
+    dp_metadata = get_forward_context().dp_metadata
+    sizes = dp_metadata.get_chunk_sizes_across_dp_rank()
+    dist_group = get_ep_group() if is_sequence_parallel else get_dp_group()
+    return dist_group.reduce_scatterv(hidden_states, dim=0, sizes=sizes)</code></pre>
+
+      <h3>8.4 Modular prepare/finalize 中的 dispatch/combine</h3>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/prepare_finalize/naive_dp_ep.py:156-207
+res = get_ep_group().dispatch(
+    a1q,
+    topk_weights,
+    topk_ids,
+    is_sequence_parallel=self.is_sequence_parallel,
+    extra_tensors=extra_tensors,
+)
+
+out = weight_and_reduce_impl.apply(
+    output=None,
+    fused_expert_output=fused_expert_output,
+    topk_weights=topk_weights,
+    topk_ids=topk_ids,
+    apply_router_weight_on_input=apply_router_weight_on_input,
+)
+
+output.copy_(
+    get_ep_group().combine(out, is_sequence_parallel=self.is_sequence_parallel)
+)</code></pre>
+    </section>
+
+    <section id="large-ep">
+      <h2>9. 大 EP 是什么</h2>
+      <p>大 EP 可以理解为：把 <code>EP_SIZE</code> 扩到很多 GPU，通常用 <code>TP=1, DP=N, --enable-expert-parallel</code>，让 attention 在 DP rank 间复制或小规模 TP，而 MoE experts 横跨所有 DP×TP ranks 分片。</p>
+      <div class="grid">
+        <div>
+          <h3>普通 TP MoE</h3>
+          <ul>
+            <li>每个 expert 的矩阵被 TP 切开。</li>
+            <li>所有 rank 都保留所有 experts 的一片。</li>
+            <li>MoE 权重 IO 和显存不随 expert 稀疏性充分下降。</li>
+          </ul>
+        </div>
+        <div>
+          <h3>大 EP MoE</h3>
+          <ul>
+            <li>每个 rank 持有一部分完整 experts。</li>
+            <li>EP_SIZE 越大，每 rank expert 越少。</li>
+            <li>代价是 MoE 层每步需要跨 rank token dispatch/combine。</li>
+          </ul>
+        </div>
+      </div>
+
+      <table>
+        <tr><th>配置</th><th>EP_SIZE</th><th>每 rank routed experts</th><th>适用</th></tr>
+        <tr><td><code>TP=8, DP=1, EP on</code></td><td>8</td><td>32</td><td>单节点，attention TP=8，MoE EP=8</td></tr>
+        <tr><td><code>TP=1, DP=8, EP on</code></td><td>8</td><td>32</td><td>单节点大 EP，attention 复制，MoE 分片</td></tr>
+        <tr><td><code>TP=1, DP=16, EP on</code></td><td>16</td><td>16</td><td>两节点或更多，常配 DeepEP low_latency/high_throughput</td></tr>
+        <tr><td><code>TP=1, DP=32, EP on + EPLB redundant=32</code></td><td>32</td><td><code>(256+32)/32=9</code></td><td>大规模服务，热门 expert 可复制</td></tr>
+      </table>
+
+      <p>vLLM 文档也把 EP 描述为通常与 DP 结合，EP size 自动等于 <code>TP_SIZE × DP_SIZE</code>。多节点时建议配 <code>--all2all-backend deepep_high_throughput</code> 用于 prefill，<code>deepep_low_latency</code> 用于 decode。</p>
+      <pre><code># 单节点 DeepSeek-V3-0324 EP 示例
+vllm serve deepseek-ai/DeepSeek-V3-0324 \
+  --tensor-parallel-size 1 \
+  --data-parallel-size 8 \
+  --enable-expert-parallel
+
+# 两节点 decode 倾向低延迟 all2all
+vllm serve deepseek-ai/DeepSeek-V3-0324 \
+  --all2all-backend deepep_low_latency \
+  --tensor-parallel-size 1 \
+  --enable-expert-parallel \
+  --data-parallel-size 16 \
+  --data-parallel-size-local 8</code></pre>
+
+      <div class="note warn">
+        大 EP 的瓶颈从 GEMM 显存转向 token dispatch/combine 通信、router skew 和负载均衡。也就是说，EP_SIZE 增大后，EPLB、all2all backend、DP 调度器的重要性会明显上升。
+      </div>
+    </section>
+
+    <section id="eplb">
+      <h2>10. EPLB 与冗余专家</h2>
+      <h3>10.1 逻辑专家、物理专家、冗余专家</h3>
+      <p>vLLM 的 EPLB 术语非常直接：logical expert 是模型原始 expert；redundant expert 是热门 logical expert 的额外副本；physical expert 是实际部署在某个设备上的 expert slot。</p>
+      <pre><code># vllm/vllm/distributed/eplb/eplb_state.py:8-26
+- Logical Expert: An expert that is part of the model's logical structure.
+- Redundant Expert: additional copies of popular logical experts.
+- Physical Expert: an expert instantiated on a specific device.
+
+For example: DeepSeek-R1 has 256 logical experts.
+If we add 32 redundant experts, DeepSeek-R1 will have
+256 + 32 = 288 physical experts in total.
+With 32 EP ranks, each GPU holds 288 / 32 = 9 local physical experts.</code></pre>
+
+      <h3>10.2 EPLB 初始化 map</h3>
+      <p>初始化时，先把 <code>physical_to_logical_map</code> 设为 <code>[0,1,...,255,0,1,...]</code>，再反推出 <code>logical_to_physical_map</code> 和 <code>logical_replica_count</code>。每层都有自己的 map。</p>
+      <pre><code># vllm/vllm/distributed/eplb/eplb_state.py:286-304, 342-447
+global_physical_to_logical_map = list(range(num_routed_experts))
+global_physical_to_logical_map += [
+    i % num_routed_experts for i in range(num_redundant_experts)
+]
+
+physical_to_logical_map = torch.tensor(physical_to_logical_map_list, device=self.device)
+logical_to_physical_map = torch.full(
+    (model.num_logical_experts, max_slots_per_logical_expert),
+    -1,
+    device=self.device,
+)
+logical_replica_count = torch.zeros(
+    (model.num_logical_experts,),
+    device=self.device,
+    dtype=torch.long,
+)
+
+for i in range(model.num_physical_experts):
+    logical_idx = physical_to_logical_map[i]
+    logical_to_physical_map[logical_idx, logical_replica_count[logical_idx]] = i
+    logical_replica_count[logical_idx] += 1
+
+model.set_eplb_state(
+    expert_load_pass,
+    logical_to_physical_map,
+    logical_replica_count,
+)</code></pre>
+
+      <h3>10.3 Router 中 logical id 到 physical id 的改写</h3>
+      <p>EPLB 不改变 router 数学上选出的 logical expert；它在 routing 之后把 logical id 映射为某个 physical replica，并顺手记录负载。</p>
+      <pre><code># vllm/vllm/model_executor/layers/fused_moe/router/base_router.py:17-79
+expert_id = tl.load(topk_ids_ptr + offs, mask=mask, other=0).to(tl.int64)
+replica_count = tl.load(
+    logical_replica_count_ptr + safe_expert_id,
+    mask=mask & valid_expert,
+    other=1,
+)
+
+KNUTH_MULTIPLIER = 2654435769
+token_idx = (offs // num_active_experts).to(tl.int64)
+hashed = (token_idx * KNUTH_MULTIPLIER) & 0xFFFFFFFF
+replica_idx = hashed % replica_count
+
+map_index = safe_expert_id * map_slots + replica_idx
+physical_id = tl.load(
+    logical_to_physical_ptr + map_index,
+    mask=mask & valid_expert,
+    other=-1,
+)
+tl.store(out_ids_ptr + offs, physical_id, mask=mask)
+
+record_enabled = tl.load(record_enabled_ptr) != 0
+valid = mask & record_enabled & (physical_id >= 0) & (physical_id < out_size)
+tl.atomic_add(out_ptr + safe_physical_id, 1, mask=valid)</code></pre>
+
+      <div class="diagram">
+        <svg width="1120" height="330" viewBox="0 0 1120 330" role="img" aria-label="EPLB logical to physical mapping">
+          <defs>
+            <marker id="arrow3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <rect class="box box-blue" x="38" y="46" width="190" height="70"></rect>
+          <text x="133" y="74" text-anchor="middle" font-size="14">router result</text>
+          <text x="133" y="96" text-anchor="middle" font-size="13">logical ids [T, 8]</text>
+
+          <rect class="box box-violet" x="292" y="36" width="220" height="92"></rect>
+          <text x="402" y="65" text-anchor="middle" font-size="14">logical_to_physical_map</text>
+          <text x="402" y="88" text-anchor="middle" font-size="13">[layers, 256, replicas]</text>
+          <text x="402" y="110" text-anchor="middle" font-size="12">热门 expert 可有多个 physical slot</text>
+
+          <rect class="box box-orange" x="580" y="46" width="215" height="70"></rect>
+          <text x="687" y="74" text-anchor="middle" font-size="14">hash by token index</text>
+          <text x="687" y="96" text-anchor="middle" font-size="13">选择 replica_idx</text>
+
+          <rect class="box box-green" x="858" y="46" width="210" height="70"></rect>
+          <text x="963" y="74" text-anchor="middle" font-size="14">physical ids</text>
+          <text x="963" y="96" text-anchor="middle" font-size="13">进入 expert_map / all2all</text>
+
+          <path class="arrow" style="marker-end:url(#arrow3)" d="M228 82 H292"></path>
+          <path class="arrow" style="marker-end:url(#arrow3)" d="M512 82 H580"></path>
+          <path class="arrow" style="marker-end:url(#arrow3)" d="M795 82 H858"></path>
+
+          <rect class="box" x="76" y="185" width="980" height="80"></rect>
+          <text x="104" y="214" font-size="14" font-weight="600">例子：E=256, redundant=32, EP=32</text>
+          <text x="104" y="240" font-size="13">physical experts = 288，每 rank 9 个 slot。EPLB policy 定期根据窗口内 token load 重排 physical_to_logical_map，并搬运权重。</text>
+        </svg>
+      </div>
+
+      <h3>10.4 重排策略：复制热门 expert，再把 physical experts 打包到 GPU</h3>
+      <pre><code># vllm/vllm/distributed/eplb/policy/default.py:76-101
+def replicate_experts(cls, weight: np.ndarray, num_phy: int):
+    n, num_log = weight.shape
+    num_redundant = num_phy - num_log
+    phy2log = np.tile(np.arange(num_phy, dtype=np.int64), (n, 1))
+    logcnt = np.ones((n, num_log), dtype=np.int64)
+    arangen = np.arange(n, dtype=np.int64)
+    for i in range(num_log, num_phy):
+        redundant_indices = np.argmax(weight / logcnt, axis=-1)
+        phy2log[:, i] = redundant_indices
+        logcnt[arangen, redundant_indices] += 1
+    return phy2log, logcnt</code></pre>
+
+      <p>直觉：负载越高的 logical expert 越可能被复制。复制后，一个热门 logical expert 的 token 会被 hash 到多个 physical replicas，降低单 rank 峰值。</p>
+    </section>
+
+    <section id="checklist">
+      <h2>11. 核对清单：从代码验证原理</h2>
+      <table>
+        <tr><th>要验证的问题</th><th>看哪里</th><th>预期</th></tr>
+        <tr><td>DeepSeek-V3 是否走 grouped top-k？</td><td><code>deepseek_v2.py</code> 创建 <code>FusedMoE(use_grouped_topk=True)</code></td><td>是，带 <code>n_group/topk_group</code></td></tr>
+        <tr><td>correction bias 是否只影响选择？</td><td><code>grouped_topk_router.py</code></td><td><code>scores+bias</code> 选 expert，<code>original_scores.gather</code> 做权重</td></tr>
+        <tr><td>EP 开启后 expert 是 TP 切还是整 expert 分片？</td><td><code>FusedMoEParallelConfig.make()</code></td><td><code>tp_size=1</code>，<code>ep_size=TP*DP*PCP</code></td></tr>
+        <tr><td>当前 rank 拥有哪些 expert？</td><td><code>ExpertMapManager.determine_expert_map()</code></td><td><code>expert_map[global_id] = local_id or -1</code></td></tr>
+        <tr><td>权重 shape 是否和公式一致？</td><td><code>UnquantizedFusedMoEMethod.create_weights()</code></td><td><code>w13=[E_local,2I,H]</code>，<code>w2=[E_local,H,I]</code></td></tr>
+        <tr><td>EPLB 怎么让 logical expert 变 physical expert？</td><td><code>base_router.py::_eplb_map_and_record_i32_kernel</code></td><td>按 token hash 选 replica，并 atomic add 记录 physical load</td></tr>
+        <tr><td>大 EP 如何减少每卡 expert 数？</td><td><code>config.py</code> + vLLM EP docs</td><td><code>local_experts=(E+redundant)/EP_SIZE</code></td></tr>
+      </table>
+      <h3>参考来源</h3>
+      <ul>
+        <li>本地代码：<code>vllm/vllm/model_executor/models/deepseek_v2.py</code></li>
+        <li>本地代码：<code>vllm/vllm/model_executor/layers/fused_moe/</code></li>
+        <li>本地代码：<code>vllm/vllm/distributed/eplb/</code></li>
+        <li>本地文档：<code>vllm/docs/serving/expert_parallel_deployment.md</code></li>
+        <li>DeepSeek-V3-0324 配置：<a href="https://huggingface.co/deepseek-ai/DeepSeek-V3-0324/raw/main/config.json">Hugging Face config.json</a></li>
+        <li>vLLM EP 文档：<a href="https://docs.vllm.ai/">vLLM docs</a>，本仓库对应源文件为 <code>vllm/docs/serving/expert_parallel_deployment.md</code></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
