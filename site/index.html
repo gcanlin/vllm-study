@@ -173,6 +173,16 @@
 <link rel="stylesheet" href="./nav.css">
 </head>
 <body>
+  <nav class="study-topnav" aria-label="Study note navigation">
+    <a class="study-topnav__brand" href="./">vLLM Study</a>
+    <div class="study-topnav__links">
+      <a class="study-topnav__link" href="./" aria-current="page">DeepSeek V3 FusedMoE</a>
+      <a class="study-topnav__link" href="./qwen3_model_runner.html">Qwen3 Runner</a>
+      <a class="study-topnav__link" href="./qwen3_structure.html">Qwen3 Structure</a>
+      <a class="study-topnav__link" href="./vllm_cp_pcp_dcp.html">CP / PCP / DCP</a>
+      <a class="study-topnav__link" href="./vllm_prefix_cache.html">Prefix Cache</a>
+    </div>
+  </nav>
   <header>
     <h1>DeepSeek-V3 的 FusedMoE、EP、大 EP 与 EPLB：按 vLLM 代码核对</h1>
     <p>目标：先把数学和 shape 讲清楚，再把每一步落到当前仓库的代码路径。重点不是“概念上 MoE 怎么工作”，而是 vLLM 里数据实际怎样从 router、expert map、all2all、kernel、EPLB map 流过。</p>
