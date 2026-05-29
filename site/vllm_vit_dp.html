@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vLLM ViT DP 代码导读：以 Qwen-VL 为例</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #182230;
+      --muted: #607086;
+      --line: #d8e0ea;
+      --code-bg: #101720;
+      --code-ink: #dbeafe;
+      --blue: #2563eb;
+      --green: #16845b;
+      --orange: #b8670e;
+      --red: #b93a3a;
+      --violet: #6d4fd4;
+      --cyan: #087ea4;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.68 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      padding: 34px 40px 26px;
+      background: #101827;
+      color: #fff;
+    }
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 31px;
+      letter-spacing: 0;
+    }
+    header p { margin: 6px 0; max-width: 1120px; color: #cbd7e6; }
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 72px;
+    }
+    section {
+      margin: 0 0 20px;
+      padding: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      padding-left: 12px;
+      border-left: 5px solid var(--blue);
+      color: #0f3b82;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 { margin: 24px 0 9px; color: #1453a8; font-size: 17px; }
+    h4 { margin: 18px 0 8px; font-size: 15px; }
+    p { margin: 8px 0; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+      background: #eef3f8;
+      color: #a32929;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow: auto;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+      font-size: inherit;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 13.5px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0f5fb; }
+    .toc {
+      columns: 2;
+      padding-left: 20px;
+    }
+    .toc li { break-inside: avoid; margin: 4px 0; }
+    .note {
+      margin: 13px 0;
+      padding: 10px 13px;
+      border-left: 4px solid var(--blue);
+      background: #eef5ff;
+      border-radius: 6px;
+      color: #18365f;
+    }
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7eb;
+      color: #4e300d;
+    }
+    .key {
+      border-left-color: var(--green);
+      background: #edf9f4;
+      color: #123d2d;
+    }
+    .small { color: var(--muted); font-size: 13px; }
+    .grid2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .diagram {
+      width: 100%;
+      overflow-x: auto;
+      margin: 12px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdff;
+    }
+    svg { display: block; min-width: 1060px; }
+    .box { fill: #fff; stroke: #94a3b8; stroke-width: 1.3; rx: 8; }
+    .box-blue { fill: #edf4ff; stroke: var(--blue); }
+    .box-green { fill: #edf9f4; stroke: var(--green); }
+    .box-orange { fill: #fff5e8; stroke: var(--orange); }
+    .box-violet { fill: #f3efff; stroke: var(--violet); }
+    .box-cyan { fill: #e9f8fc; stroke: var(--cyan); }
+    .arrow { stroke: #405166; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .dash { stroke-dasharray: 5 4; }
+    .caption { color: var(--muted); font-size: 12.5px; margin-top: -4px; }
+    @media (max-width: 860px) {
+      header { padding: 24px 18px; }
+      main { padding: 18px 12px 48px; }
+      section { padding: 16px; }
+      .toc { columns: 1; }
+      .grid2 { grid-template-columns: 1fr; }
+    }
+  </style>
+  <link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+  <nav class="study-topnav" aria-label="Study note navigation">
+    <a class="study-topnav__brand" href="./">vLLM Study</a>
+    <div class="study-topnav__links">
+      <a class="study-topnav__link" href="./">DeepSeek V3 FusedMoE</a>
+      <a class="study-topnav__link" href="./qwen3_model_runner.html">Qwen3 Runner</a>
+      <a class="study-topnav__link" href="./qwen3_structure.html">Qwen3 Structure</a>
+      <a class="study-topnav__link" href="./vllm_cp_pcp_dcp.html">CP / PCP / DCP</a>
+      <a class="study-topnav__link" href="./vllm_prefix_cache.html">Prefix Cache</a>
+      <a class="study-topnav__link" href="./vllm_vit_dp.html" aria-current="page">ViT DP</a>
+    </div>
+  </nav>
+
+  <header>
+    <h1>vLLM ViT DP 代码导读：以 Qwen-VL 为例</h1>
+    <p>本文讲的是 <code>--mm-encoder-tp-mode data</code>：在一个 TP 组内，每张卡都持有完整视觉 encoder 权重，但把图片/视频 item 分给不同 TP rank 并行编码，再 all-gather 回完整 embedding。</p>
+    <p class="small">代码基于当前工作区 <code>vllm/</code>，引用均给出 <code>文件:行号</code>。Qwen2-VL、Qwen2.5-VL、Qwen3-VL 的主路径一致，文中用 Qwen3-VL 展开 CUDA Graph，用 Qwen2-VL 展开 eager 路径。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>目录</h2>
+      <ol class="toc">
+        <li><a href="#what">ViT DP 是什么</a></li>
+        <li><a href="#usage">如何使用</a></li>
+        <li><a href="#arch">整体框架图</a></li>
+        <li><a href="#qwen-entry">Qwen-VL 模型入口</a></li>
+        <li><a href="#eager">Eager DP 代码走读</a></li>
+        <li><a href="#cudagraph">Encoder CUDA Graph + DP</a></li>
+        <li><a href="#runner">GPUModelRunner 怎么调 encoder</a></li>
+        <li><a href="#shapes">一个具体 shape 例子</a></li>
+        <li><a href="#pitfalls">限制与排查</a></li>
+      </ol>
+    </section>
+
+    <section id="what">
+      <h2>1. ViT DP 是什么</h2>
+      <p>vLLM 里多模态视觉 encoder 默认跟随 TP 做权重切分，也就是 <code>mm_encoder_tp_mode="weights"</code>。ViT DP 把这个策略改成 <code>"data"</code>：TP 组内的每个 rank 保留完整视觉 encoder 权重，输入 batch 里的图片/视频按 item 粒度切给不同 rank，本地编码后用 TP 通信组 all-gather，再恢复原始 item 顺序。</p>
+      <div class="note">
+        这不是服务层请求级 DP。<code>--data-parallel-size</code> 是多个 engine replica 分摊请求；<code>--mm-encoder-tp-mode data</code> 是同一个 engine 的 TP rank 在视觉 encoder 阶段临时当作数据并行 worker。
+      </div>
+      <table>
+        <tr><th>模式</th><th>视觉 encoder 权重</th><th>视觉输入</th><th>适合场景</th></tr>
+        <tr><td><code>weights</code></td><td>跟 TP 一样切权重</td><td>每个 rank 处理同一批输入的分片计算</td><td>默认模式，省单卡权重显存</td></tr>
+        <tr><td><code>data</code></td><td>每个 TP rank 一份完整权重</td><td>图片/视频 item 按负载分配到 rank</td><td>多图、多视频、动态分辨率，ViT 计算成为瓶颈</td></tr>
+      </table>
+      <p>配置对象直接把这个含义写在注释里：<code>MultiModalConfig.mm_encoder_tp_mode</code> 的 <code>"data"</code> 表示“split the batched input data across TP ranks”，同时说明它不是 <code>--data-parallel-size</code> 控制的请求级 DP（<code>vllm/vllm/config/multimodal.py:145-155</code>）。</p>
+    </section>
+
+    <section id="usage">
+      <h2>2. 如何使用</h2>
+      <h3>2.1 在线服务</h3>
+      <pre><code>vllm serve Qwen/Qwen2.5-VL-7B-Instruct \
+  --tensor-parallel-size 4 \
+  --mm-encoder-tp-mode data \
+  --limit-mm-per-prompt '{"image": 8, "video": 1}'</code></pre>
+      <p><code>--mm-encoder-tp-mode</code> 是 CLI 参数，注册点在 <code>vllm/vllm/engine/arg_utils.py:1233-1238</code>。实际使用时需要 <code>--tensor-parallel-size &gt; 1</code> 才有可并行的 TP rank；TP=1 时选择 <code>data</code> 也没有并行收益。</p>
+
+      <h3>2.2 离线 LLM</h3>
+      <pre><code>from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model="Qwen/Qwen2.5-VL-7B-Instruct",
+    tensor_parallel_size=4,
+    mm_encoder_tp_mode="data",
+    limit_mm_per_prompt={"image": 8},
+)
+
+outputs = llm.generate(
+    {
+        "prompt": "&lt;|vision_start|&gt;&lt;|image_pad|&gt;&lt;|vision_end|&gt;描述这张图。",
+        "multi_modal_data": {"image": image},
+    },
+    SamplingParams(max_tokens=128),
+)</code></pre>
+
+      <h3>2.3 判断模型是否支持</h3>
+      <p>模型接口有显式能力位 <code>supports_encoder_tp_data</code>，默认是 <code>False</code>（<code>vllm/vllm/model_executor/models/interfaces.py:113-117</code>）。Qwen2-VL 和 Qwen3-VL 都设置为 <code>True</code>（<code>qwen2_vl.py:1198</code>，<code>qwen3_vl.py:1626</code>）。不支持的模型即使传了 <code>data</code>，也不应该假设它会走 DP 代码。</p>
+    </section>
+
+    <section id="arch">
+      <h2>3. 整体框架图</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 1120 520" width="100%">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#405166"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas" font-size="13" fill="#182230">
+            <text x="40" y="30" font-size="15" font-weight="700">ViT DP 在一次多模态 step 中的位置</text>
+
+            <rect class="box box-blue" x="40" y="58" width="180" height="80"/>
+            <text x="130" y="88" text-anchor="middle" font-weight="700">Request</text>
+            <text x="130" y="110" text-anchor="middle" fill="#607086">prompt + image/video</text>
+
+            <rect class="box box-blue" x="260" y="58" width="190" height="80"/>
+            <text x="355" y="86" text-anchor="middle" font-weight="700">Processor / Mapper</text>
+            <text x="355" y="108" text-anchor="middle" fill="#607086">pixel_values, grid_thw</text>
+
+            <rect class="box box-violet" x="490" y="58" width="205" height="80"/>
+            <text x="592" y="86" text-anchor="middle" font-weight="700">SchedulerOutput</text>
+            <text x="592" y="108" text-anchor="middle" fill="#607086">scheduled_encoder_inputs</text>
+
+            <rect class="box box-cyan" x="735" y="58" width="300" height="80"/>
+            <text x="885" y="86" text-anchor="middle" font-weight="700">GPUModelRunner._execute_mm_encoder</text>
+            <text x="885" y="108" text-anchor="middle" fill="#607086">group_and_batch_mm_kwargs</text>
+
+            <path class="arrow" d="M220 98 H260"/>
+            <path class="arrow" d="M450 98 H490"/>
+            <path class="arrow" d="M695 98 H735"/>
+
+            <rect class="box box-green" x="120" y="190" width="250" height="102"/>
+            <text x="245" y="216" text-anchor="middle" font-weight="700">Qwen-VL embed_multimodal</text>
+            <text x="245" y="238" text-anchor="middle" fill="#607086">_process_image_input</text>
+            <text x="245" y="260" text-anchor="middle" fill="#607086">if use_data_parallel</text>
+
+            <rect class="box box-orange" x="430" y="176" width="310" height="130"/>
+            <text x="585" y="202" text-anchor="middle" font-weight="700">run_dp_sharded_mrope_vision_model</text>
+            <text x="585" y="224" text-anchor="middle" fill="#607086">1. item 负载均衡</text>
+            <text x="585" y="246" text-anchor="middle" fill="#607086">2. 每 rank 切 pixel_values</text>
+            <text x="585" y="268" text-anchor="middle" fill="#607086">3. 本地 visual()</text>
+            <text x="585" y="290" text-anchor="middle" fill="#607086">4. pad + all_gather + reorder</text>
+
+            <rect class="box box-violet" x="795" y="190" width="245" height="102"/>
+            <text x="918" y="216" text-anchor="middle" font-weight="700">Encoder CUDA Graph</text>
+            <text x="918" y="238" text-anchor="middle" fill="#607086">可选 fast path</text>
+            <text x="918" y="260" text-anchor="middle" fill="#607086">同样 shard / gather</text>
+
+            <path class="arrow" d="M885 138 C885 165 245 158 245 190"/>
+            <path class="arrow" d="M370 241 H430"/>
+            <path class="arrow dash" d="M885 138 C900 164 918 168 918 190"/>
+            <path class="arrow dash" d="M795 241 H740"/>
+
+            <rect class="box box-cyan" x="170" y="365" width="210" height="80"/>
+            <text x="275" y="395" text-anchor="middle" font-weight="700">encoder_cache</text>
+            <text x="275" y="417" text-anchor="middle" fill="#607086">mm_hash -> embeddings</text>
+
+            <rect class="box box-cyan" x="445" y="365" width="250" height="80"/>
+            <text x="570" y="394" text-anchor="middle" font-weight="700">_gather_mm_embeddings</text>
+            <text x="570" y="416" text-anchor="middle" fill="#607086">按 placeholder 范围取片段</text>
+
+            <rect class="box box-green" x="760" y="365" width="260" height="80"/>
+            <text x="890" y="394" text-anchor="middle" font-weight="700">embed_input_ids</text>
+            <text x="890" y="416" text-anchor="middle" fill="#607086">文本 embedding 中覆盖视觉位置</text>
+
+            <path class="arrow" d="M585 306 C585 345 275 335 275 365"/>
+            <path class="arrow dash" d="M918 292 C918 345 275 335 275 365"/>
+            <path class="arrow" d="M380 405 H445"/>
+            <path class="arrow" d="M695 405 H760"/>
+          </g>
+        </svg>
+      </div>
+      <p class="caption">关键点：ViT DP 只包住视觉 encoder 的执行；LLM decode/prefill 仍按原来的 TP/PP/attention 路径走。</p>
+    </section>
+
+    <section id="qwen-entry">
+      <h2>4. Qwen-VL 模型入口</h2>
+      <p>Qwen2-VL 的入口最短，适合看清楚分支：</p>
+      <pre><code>supports_encoder_tp_data = True
+
+def __init__(...):
+    multimodal_config = vllm_config.model_config.multimodal_config
+    self.use_data_parallel = multimodal_config.mm_encoder_tp_mode == "data"
+
+def _process_image_input(self, image_input):
+    grid_thw = image_input["image_grid_thw"]
+    if image_input["type"] == "image_embeds":
+        image_embeds = image_input["image_embeds"]
+    else:
+        pixel_values = image_input["pixel_values"]
+        if self.use_data_parallel:
+            return run_dp_sharded_mrope_vision_model(
+                self.visual, pixel_values, grid_thw.tolist(), rope_type="rope_3d"
+            )
+        else:
+            image_embeds = self.visual(pixel_values, grid_thw=grid_thw)
+
+    merge_size = self.visual.spatial_merge_size
+    sizes = (grid_thw.prod(-1) // merge_size // merge_size).tolist()
+    return image_embeds.split(sizes)</code></pre>
+      <p class="small">来源：<code>vllm/vllm/model_executor/models/qwen2_vl.py:1198</code>、<code>1290-1293</code>、<code>1363-1384</code>。</p>
+      <p>视频路径同理，只是读 <code>pixel_values_videos</code> 和 <code>video_grid_thw</code>，同样调用 <code>run_dp_sharded_mrope_vision_model(..., rope_type="rope_3d")</code>（<code>qwen2_vl.py:1386-1409</code>）。</p>
+
+      <p>Qwen3-VL 也设置 <code>supports_encoder_tp_data = True</code>，在构造函数中用同一行配置开关 <code>self.use_data_parallel = multimodal_config.mm_encoder_tp_mode == "data"</code>（<code>qwen3_vl.py:1626</code>、<code>1646-1657</code>）。它额外实现了 <code>SupportsEncoderCudaGraph</code>，所以除了 eager 分支外，还有 CUDA Graph fast path。</p>
+    </section>
+
+    <section id="eager">
+      <h2>5. Eager DP 代码走读</h2>
+      <p>核心函数在 <code>vllm/vllm/model_executor/models/vision.py:383-570</code>。它的输入是已经被 processor 展平后的 <code>pixel_values</code>，以及每个 item 的 <code>grid_thw</code>。</p>
+
+      <h3>5.1 先按 item 算负载</h3>
+      <pre><code>tp_size = get_tensor_model_parallel_world_size()
+tp_rank_local = get_tensor_model_parallel_rank()
+
+patches_per_image = [math.prod(grid_thw) for grid_thw in grid_thw_list]
+cum_patches_per_image = [0, *itertools.accumulate(patches_per_image)]</code></pre>
+      <p>Qwen-VL 的 <code>pixel_values</code> 是所有图片/视频 patch 在第 0 维拼起来的长 tensor；<code>grid_thw</code> 给出每个 item 的 patch 数。比如 4 张图的 patch 数是 <code>[1000, 100, 200, 50]</code>，累加偏移就是 <code>[0, 1000, 1100, 1300, 1350]</code>。</p>
+
+      <h3>5.2 贪心负载均衡</h3>
+      <pre><code>large_to_small_indices = sorted(
+    range(n_samples), key=lambda i: sizes[i], reverse=True
+)
+
+for idx in large_to_small_indices:
+    min_gpu = min(range(num_gpus), key=lambda i: gpu_loads[i])
+    gpu_assignments[min_gpu].append(idx)
+    gpu_loads[min_gpu] += sizes[idx]</code></pre>
+      <p>实现是按 patch 数从大到小排，每次把最大剩余 item 放到当前负载最小的 rank（<code>vision.py:314-380</code>）。这比简单 round-robin 更适合动态分辨率图片，因为大图和小图的 ViT 计算差异很大。</p>
+
+      <h3>5.3 每个 TP rank 切本地输入</h3>
+      <pre><code>image_idxs_local = image_to_tp_rank[
+    cum_gpu_sample_counts[tp_rank_local] : cum_gpu_sample_counts[tp_rank_local + 1]
+]
+
+pixel_values_local = torch.cat([
+    pixel_values[cum_patches_per_image[i] : cum_patches_per_image[i + 1]]
+    for i in image_idxs_local
+])</code></pre>
+      <p>这里没有切单张图的 patch，而是按完整 item 切。这样 <code>grid_thw</code>、MRoPE、后续 split 都保持简单；代价是如果只有一张超大图，TP 组内仍然只有一个 rank 真正在跑 ViT。</p>
+
+      <h3>5.4 本地跑完整视觉模型</h3>
+      <pre><code>if rope_type == "rope_3d":
+    image_embeds_local = vision_model(pixel_values_local, local_grid_thw_list)
+else:
+    image_embeds_local = vision_model(
+        pixel_values_local, torch.tensor(local_grid_thw_list)
+    )</code></pre>
+      <p>Qwen2/2.5/3-VL 使用 <code>rope_3d</code>，输出通常是 <code>[local_output_tokens, out_hidden_size]</code>。输出 token 数等于 <code>t * h * w / spatial_merge_size^2</code>。</p>
+
+      <h3>5.5 pad、all-gather、去 padding、恢复顺序</h3>
+      <pre><code>max_len_per_rank = max(grouped_pixel_values_len) // embed_dim_reduction_factor
+
+image_embeds_local_padded = pad_to(image_embeds_local, max_len_per_rank)
+gathered_embeds = tensor_model_parallel_all_gather(image_embeds_local_padded, dim=0)
+
+rank_embeddings = []
+for rank in range(tp_size):
+    start_idx = rank * max_len_per_rank
+    end_idx = start_idx + grouped_pixel_values_len[rank] // embed_dim_reduction_factor
+    rank_embeddings.append(gathered_embeds[start_idx:end_idx])
+
+original_order_embeddings[img_idx] = rank_embed[embed_start:embed_start + img_patches]</code></pre>
+      <p><code>tensor_model_parallel_all_gather</code> 要求每个 rank 的 tensor shape 一致，所以先 pad 到所有 rank 中最大的输出长度（<code>vision.py:469-528</code>）。all-gather 后再根据每个 rank 的真实输出 token 数去 padding，并按 <code>image_to_tp_rank</code> 记录的分配顺序拆回原始 item 顺序（<code>vision.py:530-570</code>）。</p>
+    </section>
+
+    <section id="cudagraph">
+      <h2>6. Encoder CUDA Graph + DP</h2>
+      <p>Qwen3-VL 实现了 <code>SupportsEncoderCudaGraph</code>，GPUModelRunner 在 capture 阶段创建 <code>EncoderCudaGraphManager</code> 并捕获预算图（<code>gpu_model_runner.py:6384-6406</code>、<code>6431-6433</code>）。执行时，如果当前 modality 被 manager 支持，会先尝试 CUDA Graph，否则回退到 <code>model.embed_multimodal</code>（<code>gpu_model_runner.py:3044-3057</code>）。</p>
+
+      <h3>6.1 Qwen3-VL 暴露模型相关元数据</h3>
+      <pre><code>def get_encoder_cudagraph_item_specs(self, mm_kwargs):
+    m = self.visual.spatial_merge_size
+    grid_thw = self._get_grid_thw_by_modality(mm_kwargs)
+    return [
+        EncoderItemSpec(
+            input_size=t * h * w,
+            output_tokens=t * (h // m) * (w // m),
+        )
+        for t, h, w in grid_thw
+    ]</code></pre>
+      <p>这段把“输入负载”和“输出 embedding 长度”明确告诉 graph manager（<code>qwen3_vl.py:1859-1873</code>）。选择 item 时，Qwen3-VL 也按 <code>grid_thw</code> 计算 cumulative patch offset，从 <code>pixel_values</code> 里切出选中的 item（<code>qwen3_vl.py:1875-1915</code>）。</p>
+
+      <h3>6.2 捕获图：按 token budget 准备大 buffer</h3>
+      <pre><code>per_mm_item_output = (token_budget + max_batch_size - 1) // max_batch_size
+grid_config = [
+    [1, spatial_merge_size, per_mm_item_output * spatial_merge_size]
+    for _ in range(max_batch_size)
+]
+
+dummy_pixel_values = torch.randn(total_patches, flattened_patch_size, ...)
+buffers = self.visual.prepare_encoder_metadata(
+    grid_config,
+    max_batch_size=max_batch_size,
+    max_seqlen_override=token_budget * (spatial_merge_size**2),
+)</code></pre>
+      <p>捕获时使用 dummy 输入和 metadata buffer，保证之后 replay 的真实输入能塞进同一组 shape（<code>qwen3_vl.py:1917-1999</code>）。视频场景会构造带帧数的 capture grid，让 <code>cu_seqlens</code> 容量足够。</p>
+
+      <h3>6.3 Graph manager 内部先 batch pack，再可选 DP shard</h3>
+      <p><code>EncoderCudaGraphManager</code> 初始化时只有在 <code>mm_encoder_tp_mode == "data"</code> 且 <code>tensor_parallel_size &gt; 1</code> 时启用 <code>use_dp</code>（<code>encoder_cudagraph.py:149-154</code>）。它有两层调度：</p>
+      <table>
+        <tr><th>函数</th><th>职责</th><th>关键行</th></tr>
+        <tr><td><code>_execute_local</code></td><td>在本 rank 内把多个 item 按 token budget 贪心打包，命中 graph 就 replay，超预算就 eager fallback</td><td><code>encoder_cudagraph.py:337-443</code></td></tr>
+        <tr><td><code>_dp_shard</code></td><td>跨 TP rank 按 <code>input_size</code> 做负载均衡，得到本 rank 的 <code>local_mm_kwargs</code></td><td><code>encoder_cudagraph.py:445-507</code></td></tr>
+        <tr><td><code>_dp_gather</code></td><td>本地输出 concat 后 pad，TP all-gather，逐 rank 去 padding，再恢复 item 顺序</td><td><code>encoder_cudagraph.py:509-574</code></td></tr>
+        <tr><td><code>execute</code></td><td>如果 <code>use_dp</code>，依次调用 shard、本地执行、gather；否则只本地执行</td><td><code>encoder_cudagraph.py:576-609</code></td></tr>
+      </table>
+      <p>所以 CUDA Graph 路径和 eager 路径的 DP 思路完全一致：item 级 shard，本地跑完整 ViT，pad + all-gather，恢复顺序。不同点是本地执行可以走预算图，减少 encoder 调用开销。</p>
+    </section>
+
+    <section id="runner">
+      <h2>7. GPUModelRunner 怎么调 encoder</h2>
+      <p>一次 step 中，GPUModelRunner 先根据 scheduler 输出拿到本步需要计算的多模态输入：</p>
+      <pre><code>mm_hashes, mm_kwargs, mm_lora_refs = self._batch_mm_inputs_from_scheduler(
+    scheduler_output
+)
+if not mm_kwargs:
+    return []</code></pre>
+      <p>入口是 <code>_execute_mm_encoder</code>（<code>gpu_model_runner.py:2860-2869</code>）。它会把同 modality 的输入尽量 batch 起来，然后执行 encoder：</p>
+      <pre><code>for modality, num_items, mm_kwargs_batch in group_and_batch_mm_kwargs(...):
+    cudagraph_output = None
+    if (
+        self.encoder_cudagraph_manager is not None
+        and self.encoder_cudagraph_manager.supports_modality(modality)
+    ):
+        cudagraph_output = self.encoder_cudagraph_manager.execute(mm_kwargs_batch)
+
+    if cudagraph_output is not None:
+        batch_outputs = cudagraph_output
+    else:
+        batch_outputs = model.embed_multimodal(**mm_kwargs_batch)</code></pre>
+      <p class="small">来源：<code>vllm/vllm/v1/worker/gpu_model_runner.py:2984-3057</code>。</p>
+      <p>无论走 CUDA Graph 还是 eager，最后都会把每个 item 的 encoder 输出写入 <code>encoder_cache</code>：</p>
+      <pre><code>for mm_hash, output in zip(mm_hashes, encoder_outputs):
+    self.encoder_cache[mm_hash] = output</code></pre>
+      <p>后续 <code>_gather_mm_embeddings</code> 按请求中 placeholder 的 token 范围，从 <code>encoder_cache</code> 中取出本 step 需要的 embedding 片段（<code>gpu_model_runner.py:3094-3134</code>）。接着 runner 统一走 embedding 输入：先对 token id 做文本 embedding，再把多模态位置覆盖为视觉 embedding（<code>gpu_model_runner.py:3385-3400</code>）。底层覆盖逻辑就是 <code>inputs_embeds[is_multimodal] = mm_embeds_flat</code>（<code>vllm/vllm/model_executor/models/utils.py:456-492</code>）。</p>
+    </section>
+
+    <section id="shapes">
+      <h2>8. 一个具体 shape 例子</h2>
+      <p>假设 TP=2，一次 encoder batch 有 4 张图，<code>spatial_merge_size=2</code>，patch 数分别为：</p>
+      <pre><code>patches_per_image = [1000, 100, 200, 50]
+output_tokens     = [250, 25, 50, 12]   # floor 视具体 grid 整除情况而定</code></pre>
+      <div class="diagram">
+        <svg viewBox="0 0 1120 330" width="100%">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#405166"/>
+            </marker>
+          </defs>
+          <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas" font-size="13" fill="#182230">
+            <text x="40" y="30" font-size="15" font-weight="700">负载均衡、all-gather、恢复顺序</text>
+
+            <rect class="box box-blue" x="50" y="62" width="210" height="68"/>
+            <text x="155" y="90" text-anchor="middle" font-weight="700">原始顺序</text>
+            <text x="155" y="112" text-anchor="middle">img0=1000, img1=100, img2=200, img3=50</text>
+
+            <rect class="box box-orange" x="330" y="45" width="250" height="102"/>
+            <text x="455" y="72" text-anchor="middle" font-weight="700">get_load_balance_assignment</text>
+            <text x="455" y="96" text-anchor="middle">rank0: [img0], load=1000</text>
+            <text x="455" y="118" text-anchor="middle">rank1: [img2,img1,img3], load=350</text>
+
+            <rect class="box box-green" x="660" y="45" width="190" height="102"/>
+            <text x="755" y="72" text-anchor="middle" font-weight="700">本地 visual()</text>
+            <text x="755" y="96" text-anchor="middle">rank0: 250 tokens</text>
+            <text x="755" y="118" text-anchor="middle">rank1: 87 tokens</text>
+
+            <rect class="box box-violet" x="905" y="45" width="170" height="102"/>
+            <text x="990" y="72" text-anchor="middle" font-weight="700">pad 到 250</text>
+            <text x="990" y="96" text-anchor="middle">rank0: [250]</text>
+            <text x="990" y="118" text-anchor="middle">rank1: [87 + pad]</text>
+
+            <path d="M260 96 H330" stroke="#405166" stroke-width="1.6" fill="none" marker-end="url(#arrow2)"/>
+            <path d="M580 96 H660" stroke="#405166" stroke-width="1.6" fill="none" marker-end="url(#arrow2)"/>
+            <path d="M850 96 H905" stroke="#405166" stroke-width="1.6" fill="none" marker-end="url(#arrow2)"/>
+
+            <rect class="box box-cyan" x="260" y="215" width="250" height="72"/>
+            <text x="385" y="244" text-anchor="middle" font-weight="700">all_gather 后</text>
+            <text x="385" y="266" text-anchor="middle">[rank0 250, rank1 250]</text>
+
+            <rect class="box box-cyan" x="580" y="215" width="250" height="72"/>
+            <text x="705" y="244" text-anchor="middle" font-weight="700">去 padding + split</text>
+            <text x="705" y="266" text-anchor="middle">img0, img2, img1, img3</text>
+
+            <rect class="box box-green" x="890" y="215" width="180" height="72"/>
+            <text x="980" y="244" text-anchor="middle" font-weight="700">恢复原始顺序</text>
+            <text x="980" y="266" text-anchor="middle">img0, img1, img2, img3</text>
+
+            <path d="M990 147 C990 188 385 175 385 215" stroke="#405166" stroke-width="1.6" fill="none" marker-end="url(#arrow2)"/>
+            <path d="M510 251 H580" stroke="#405166" stroke-width="1.6" fill="none" marker-end="url(#arrow2)"/>
+            <path d="M830 251 H890" stroke="#405166" stroke-width="1.6" fill="none" marker-end="url(#arrow2)"/>
+          </g>
+        </svg>
+      </div>
+      <p>这个例子展示了两个现实特征：第一，负载按 patch 数平衡，而不是按 item 数平均；第二，通信量按最大 rank 输出长度补齐，所以严重不均衡时 all-gather padding 会浪费带宽。</p>
+    </section>
+
+    <section id="pitfalls">
+      <h2>9. 限制与排查</h2>
+      <div class="grid2">
+        <div class="note warn">
+          <strong>单 item 不能被进一步拆分。</strong>
+          当前实现按图片/视频 item 分配 rank。如果一个请求只有一张超大图，ViT DP 很难吃满所有 TP rank。
+        </div>
+        <div class="note warn">
+          <strong>会复制视觉 encoder 权重。</strong>
+          <code>data</code> 模式的收益来自并行处理输入，但每个 TP rank 持有完整视觉权重；小显存卡上要关注峰值显存。
+        </div>
+        <div class="note">
+          <strong>只对支持模型生效。</strong>
+          看模型类是否设置 <code>supports_encoder_tp_data = True</code>，以及是否真的在 <code>_process_*_input</code> 里调用 DP helper。
+        </div>
+        <div class="note">
+          <strong>先看日志和 profiler。</strong>
+          CUDA Graph manager 初始化日志会打印 <code>use_dp</code>；性能上应看到 visual encoder 时间随多 item batch 被 TP rank 分摊。
+        </div>
+      </div>
+      <h3>排查清单</h3>
+      <table>
+        <tr><th>现象</th><th>优先检查</th></tr>
+        <tr><td>没有加速</td><td><code>tensor_parallel_size</code> 是否大于 1；batch 内是否有多个图片/视频 item；模型是否支持 <code>supports_encoder_tp_data</code></td></tr>
+        <tr><td>显存上涨</td><td>这是预期之一：视觉 encoder 权重在 TP rank 上复制；可降低 TP、限制图片/视频数量或关闭 <code>data</code></td></tr>
+        <tr><td>CUDA Graph 没命中</td><td>检查 <code>cudagraph_mm_encoder</code>、模型是否实现 <code>SupportsEncoderCudaGraph</code>、item token 是否超出预算</td></tr>
+        <tr><td>多模态 token 数不匹配</td><td>核对 <code>grid_thw</code>、<code>spatial_merge_size</code>、placeholder 数量和 encoder 输出长度</td></tr>
+      </table>
+      <p>一句话总结：ViT DP 是“把 TP rank 暂时当作视觉 encoder 的数据并行 worker”。它不改变 LLM 主干的并行方式，也不改变最终 token 序列；它只让视觉输入在进入 LLM 前更快地被编码成可覆盖 placeholder 的 embedding。</p>
+    </section>
+  </main>
+  <script src="./nav.js"></script>
+</body>
+</html>
