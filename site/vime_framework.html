@@ -191,6 +191,8 @@
         <li><a href="#vllm">Vime 如何与 vLLM 交互</a></li>
         <li><a href="#weight-sync">训练权重如何同步给 vLLM</a></li>
         <li><a href="#megatron">Megatron 简明科普</a></li>
+        <li><a href="#rl">GRPO / PPO / reward / logprob</a></li>
+        <li><a href="#r3">R3 / router replay</a></li>
         <li><a href="#features">Vime / slime 特性清单</a></li>
         <li><a href="#extension">二次开发入口</a></li>
         <li><a href="#checklist">代码核对清单</a></li>
@@ -664,8 +666,252 @@ pg_loss = clipped_policy_gradient(ppo_kl, advantages)</code></pre>
       <p>这里容易混淆的是：<code>rollout_log_probs</code> 是 vLLM 生成时记录的旧策略概率；<code>log_probs</code> 是 Megatron 当前 actor 对同一批 response 重算出来的概率。off-policy correction、mismatch metrics、TIS 都围绕两者的差异展开。</p>
     </section>
 
+    <section id="rl">
+      <h2>8. GRPO / PPO / reward / logprob</h2>
+      <p>Vime 的 RL 训练可以先用一句话概括：vLLM 用旧 actor 采样 response，reward model 或规则给每条 response 打分，Megatron 用这些 response 重新计算当前 actor 的 logprob，再按 GRPO/PPO 等算法把 reward 转成 token-level advantage，最后更新 actor。</p>
+
+      <div class="diagram">
+        <svg width="1160" height="430" viewBox="0 0 1160 430" role="img" aria-label="RL data path">
+          <defs>
+            <marker id="arrow6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <style>.a6{marker-end:url(#arrow6)}</style>
+
+          <rect class="box box-blue" x="46" y="62" width="190" height="76"></rect>
+          <text x="141" y="92" text-anchor="middle" font-size="14">prompt group</text>
+          <text x="141" y="116" text-anchor="middle" font-size="12">同一 prompt 采 K 条</text>
+
+          <rect class="box box-cyan" x="296" y="44" width="220" height="112"></rect>
+          <text x="406" y="74" text-anchor="middle" font-size="14">vLLM rollout actor</text>
+          <text x="406" y="98" text-anchor="middle" font-size="12">生成 response tokens</text>
+          <text x="406" y="118" text-anchor="middle" font-size="12">记录 rollout_log_probs</text>
+          <text x="406" y="138" text-anchor="middle" font-size="12">可记录 routed_experts</text>
+
+          <rect class="box box-green" x="576" y="62" width="210" height="76"></rect>
+          <text x="681" y="92" text-anchor="middle" font-size="14">reward</text>
+          <text x="681" y="116" text-anchor="middle" font-size="12">rule / verifier / RM / remote</text>
+
+          <rect class="box box-orange" x="846" y="44" width="250" height="112"></rect>
+          <text x="971" y="74" text-anchor="middle" font-size="14">Megatron actor forward</text>
+          <text x="971" y="98" text-anchor="middle" font-size="12">重算 log_probs / entropy</text>
+          <text x="971" y="118" text-anchor="middle" font-size="12">可算 ref_log_probs</text>
+          <text x="971" y="138" text-anchor="middle" font-size="12">PPO 可接 critic values</text>
+
+          <path class="arrow a6" d="M236 100 H296"></path>
+          <path class="arrow a6" d="M516 100 H576"></path>
+          <path class="arrow a6" d="M786 100 H846"></path>
+
+          <rect class="box box-violet" x="200" y="256" width="255" height="94"></rect>
+          <text x="328" y="286" text-anchor="middle" font-size="14">advantage / returns</text>
+          <text x="328" y="310" text-anchor="middle" font-size="12">GRPO: group-relative reward</text>
+          <text x="328" y="330" text-anchor="middle" font-size="12">PPO: reward + values + GAE</text>
+
+          <rect class="box box-red" x="535" y="256" width="255" height="94"></rect>
+          <text x="663" y="286" text-anchor="middle" font-size="14">policy / value loss</text>
+          <text x="663" y="310" text-anchor="middle" font-size="12">ratio = exp(new - old)</text>
+          <text x="663" y="330" text-anchor="middle" font-size="12">clip / entropy / KL</text>
+
+          <rect class="box box-green" x="870" y="256" width="190" height="94"></rect>
+          <text x="965" y="286" text-anchor="middle" font-size="14">optimizer.step</text>
+          <text x="965" y="310" text-anchor="middle" font-size="12">更新 actor</text>
+          <text x="965" y="330" text-anchor="middle" font-size="12">同步回 vLLM</text>
+
+          <path class="arrow a6" d="M971 156 C971 214 328 214 328 256"></path>
+          <path class="arrow a6" d="M455 303 H535"></path>
+          <path class="arrow a6" d="M790 303 H870"></path>
+        </svg>
+      </div>
+
+      <h3>8.1 这些量分别是什么</h3>
+      <table>
+        <tr><th>量</th><th>直觉</th><th>Vime 代码位置</th><th>训练里怎么用</th></tr>
+        <tr><td><code>reward</code></td><td>一条 response 的最终分数，数学题常是对/错，代码题常是测试通过率，也可以是 RM 输出。</td><td><code>vllm_rollout.generate_and_rm</code>、<code>rm_hub</code>、<code>RolloutManager._post_process_rewards</code></td><td>先进入 <code>train_data["rewards"]</code>。GRPO 会按组归一化；PPO 会把它加到最后一个有效 response token 上。</td></tr>
+        <tr><td><code>raw_reward</code></td><td>未归一化、未后处理的原始分数。</td><td><code>_convert_samples_to_train_data</code></td><td>主要用于日志、pass@k、debug。训练常用的是后处理后的 <code>rewards</code>。</td></tr>
+        <tr><td><code>rollout_log_probs</code></td><td>vLLM 在生成时，旧 actor 对每个采样出来的 token 给出的 log probability。</td><td><code>vllm_rollout.generate</code></td><td>作为 old policy。off-policy correction、TIS、mismatch metrics 和部分 PPO ratio 会用。</td></tr>
+        <tr><td><code>log_probs</code></td><td>训练时 Megatron 当前 actor 对同一批 response token 重新算的 log probability。</td><td><code>MegatronTrainRayActor.compute_log_prob</code>、<code>loss.py::get_log_probs_and_entropy</code></td><td>作为 new policy。policy loss 里的 ratio 本质是 <code>exp(log_probs - old_log_probs)</code>。</td></tr>
+        <tr><td><code>ref_log_probs</code></td><td>reference model 对同一批 response 的 log probability。</td><td><code>with_ref=True</code> 后 <code>compute_log_prob(store_prefix="ref_")</code></td><td>计算 KL penalty 或 KL loss，防止 actor 偏离初始/参考模型太远。</td></tr>
+        <tr><td><code>values</code></td><td>critic 对每个 response token 的价值估计，近似“从这里往后还能拿多少回报”。</td><td><code>train_critic</code>、<code>loss.py::get_values</code></td><td>PPO 用它做 GAE advantage 和 value loss；GRPO 默认不需要 critic。</td></tr>
+        <tr><td><code>advantages</code></td><td>告诉 actor 某个 token 动作比预期好还是差。正数提高概率，负数降低概率。</td><td><code>loss.py::compute_advantages_and_returns</code></td><td>policy loss 的权重。它不是日志指标本身，而是训练信号。</td></tr>
+        <tr><td><code>returns</code></td><td>critic 要拟合的目标回报。</td><td><code>compute_advantages_and_returns</code></td><td>PPO critic 的 value loss 目标；GRPO 中常和 reward broadcast 近似一致。</td></tr>
+      </table>
+
+      <h3>8.2 GRPO 怎么运作</h3>
+      <p>GRPO 不训练 critic。它依赖“同一个 prompt 采多条 response”形成组内比较：同组里 reward 高的 response 得到正 advantage，低的 response 得到负 advantage。Vime 里这一步分两段完成。</p>
+      <pre><code># RolloutManager._post_process_rewards
+raw_rewards = [sample.get_reward_value(args) for sample in samples]
+rewards = rewards.reshape(-1, n_samples_per_prompt)
+rewards = rewards - rewards.mean(dim=-1, keepdim=True)
+if grpo_std_normalization:
+    rewards = rewards / (rewards.std(dim=-1, keepdim=True) + 1e-6)
+
+# loss.py::compute_advantages_and_returns
+returns = get_grpo_returns(rewards, kl)  # 把每条 response 的 scalar reward broadcast 到 token
+advantages = [r for r in returns]</code></pre>
+      <p>一个例子：<code>n_samples_per_prompt=4</code>，同一题四条回答 raw reward 为 <code>[1, 1, 0, 0]</code>。组均值是 <code>0.5</code>，归一化前 reward 变成 <code>[+0.5, +0.5, -0.5, -0.5]</code>。训练时两条正确回答的 token 被整体增强，两条错误回答的 token 被整体压低。</p>
+      <p>GRPO 的优点是省掉 critic，资源和流程都简单；代价是它强依赖组内 reward 有差异。如果一组全对或全错，组内标准差为 0，训练信号就很弱，所以 Vime 有 <code>zero_std/count_*</code> 和 dynamic sampling filter 来监控/过滤这类组。</p>
+
+      <h3>8.3 PPO 怎么运作</h3>
+      <p>PPO 需要 critic。Vime 在 <code>parse_args</code> 里把 <code>args.use_critic = args.advantage_estimator == "ppo"</code>，所以 <code>train.py</code> 会先训 critic，再把 critic 返回的 <code>values</code> 交给 actor。</p>
+      <pre><code># train.py
+value_refs = critic_model.async_train(rollout_id, rollout_data_ref)
+ray.get(actor_model.async_train(rollout_id, rollout_data_ref, external_data=value_refs))
+
+# critic: values -> advantages/returns -> value_loss
+rollout_data.update(forward_only(get_values, ...))
+compute_advantages_and_returns(args, rollout_data)
+args.loss_type = "value_loss"
+train(...)
+
+# actor: 接收 critic values -> policy_loss
+rollout_data["values"] = tensors_to_gpu(external_data["values"])
+compute_advantages_and_returns(args, rollout_data)
+train(...)</code></pre>
+      <p>PPO 的 reward 不是简单 broadcast。Vime 会把 KL penalty 当成 token-level reward，再把最终 scalar reward 加到最后一个有效 response token 上：</p>
+      <pre><code># loss.py::compute_advantages_and_returns, advantage_estimator == "ppo"
+for reward, k in zip(old_rewards, kl):
+    k *= -args.kl_coef              # 每个 token 的 KL 惩罚
+    k[-1] += reward                 # 最后一个 token 加最终任务 reward
+    rewards.append(k)
+advantages, returns = get_advantages_and_returns_batch(
+    total_lengths, response_lengths, values, rewards, gamma, lambd
+)</code></pre>
+      <p>然后 PPO 用 GAE 算 advantage。直觉是：如果 critic 认为某个 token 之后的期望回报很高，但实际回报更高，那么 advantage 为正；实际更低则为负。actor 用 clipped policy loss 更新，critic 用 value loss 学会更准地预测 return。</p>
+
+      <h3>8.4 policy loss 里的 ratio、KL、entropy</h3>
+      <p>Vime 里的 PPO-style policy loss 统一走 <code>ppo_utils.compute_policy_loss</code>：</p>
+      <pre><code># old_log_probs 通常来自 rollout_log_probs 或上一次 actor forward
+ppo_kl = old_log_probs - log_probs
+ratio = exp(-ppo_kl) = exp(log_probs - old_log_probs)
+pg_loss_1 = -ratio * advantages
+pg_loss_2 = -clip(ratio, 1 - eps_clip, 1 + eps_clip_high) * advantages
+pg_loss = max(pg_loss_1, pg_loss_2)</code></pre>
+      <p>这个 clip 的意义是限制 actor 一次更新不要把某些 token 的概率改得太猛。<code>entropy</code> 则衡量分布有多“散”：太低说明模型过早变得确定，探索减少；太高说明模型可能还不稳定。<code>kl</code> 衡量 actor 和 reference 或 old policy 的偏离，过大通常表示训练步太激进。</p>
+
+      <h3>8.5 怎么判断训练效果</h3>
+      <table>
+        <tr><th>指标</th><th>从哪里来</th><th>怎么看</th></tr>
+        <tr><td><code>eval/&lt;dataset&gt;</code></td><td><code>_log_eval_rollout_data</code></td><td>最重要。独立评估集平均 reward / accuracy 应该上升。训练 reward 上升但 eval 不升，通常是过拟合、reward hacking 或采样分布变了。</td></tr>
+        <tr><td><code>rollout/response_len/*</code></td><td><code>compute_metrics_from_samples</code></td><td>长度变化要结合任务看。数学 RL 常见模型学会更长推理，但如果暴涨且 reward 不涨，可能在拖长输出。</td></tr>
+        <tr><td><code>rollout/truncated_ratio</code></td><td><code>Sample.Status.TRUNCATED</code></td><td>高截断率表示 <code>rollout_max_response_len</code> 不够，reward 和 loss 都可能偏。</td></tr>
+        <tr><td><code>pass@k</code> / <code>log_passrate</code></td><td><code>compute_pass_rate</code></td><td>对每题多采样时很有用。平均 reward 上升但 pass@k 不升，可能只是少数 easy case 变好。</td></tr>
+        <tr><td><code>rollout/zero_std/count_*</code></td><td><code>_compute_zero_std_metrics</code></td><td>GRPO 关键指标。全对/全错组越多，组内相对信号越少；必要时用 dynamic sampling 过滤。</td></tr>
+        <tr><td><code>rollout/log_probs</code>、<code>rollout/ref_log_probs</code>、<code>rollout/kl</code></td><td>Megatron forward + <code>compute_advantages_and_returns</code></td><td>KL 持续走高说明 actor 偏离参考模型。太低且 reward 不变，可能更新太保守。</td></tr>
+        <tr><td><code>rollout/entropy</code></td><td><code>get_log_probs_and_entropy</code></td><td>观察探索程度。快速坍缩到很低时要检查学习率、clip、KL、reward 尺度。</td></tr>
+        <tr><td><code>rollout/pg_clipfrac</code></td><td><code>policy_loss_function</code></td><td>PPO clip 触发比例。长期很高通常说明 step 太大；长期接近 0 且 reward 不动，可能更新太弱。</td></tr>
+        <tr><td><code>rollout/value_loss</code>、<code>value_clipfrac</code></td><td><code>value_loss_function</code></td><td>PPO 才看。critic 学不好时 advantage 噪声大，actor 更新会不稳。</td></tr>
+        <tr><td><code>tis</code>、<code>tis_clipfrac</code>、<code>tis_abs</code></td><td><code>vanilla_tis_function</code></td><td>训练策略和 rollout 策略 mismatch 的信号。越大说明当前 actor 对旧 rollout 数据的概率偏移越大。</td></tr>
+        <tr><td><code>perf/tokens_per_gpu_per_sec</code>、<code>rollout_time</code></td><td><code>compute_perf_metrics_from_samples</code></td><td>性能指标。训练效果没问题但吞吐差时看这里和 dynamic batch size。</td></tr>
+      </table>
+      <div class="note">
+        实战里优先级通常是：先看 eval reward/pass@k，再看训练 rollout reward 是否同步变化；然后检查 truncated_ratio、response_len、KL/entropy/clipfrac 是否异常。单看训练 loss 不可靠，因为 RL 的 loss 不是监督学习里的“越低越好”。
+      </div>
+    </section>
+
+    <section id="r3">
+      <h2>9. R3 / router replay：MoE 训练里的路由重放</h2>
+      <p>R3 解决的是 MoE RL 中一个很具体的问题：rollout 时 vLLM 选择了一组 experts 来生成 token；训练时 Megatron 重新 forward 同一批 token，router 可能选出另一组 experts。这样 actor 训练的 logprob、梯度路径和真正生成 response 的路径不一致，会放大 train/infer mismatch。</p>
+
+      <h3>9.1 MoE 里为什么会出现这个问题</h3>
+      <p>MoE 层不是所有 FFN 都参与计算。每个 token 先经过 router 得到 top-k expert id，再只送到这些 experts。以 DeepSeek/Qwen MoE 这类模型为例，一个 token 在某层可能选 <code>[17, 93, 104, ...]</code>，下一层又是另一组。</p>
+      <pre><code>hidden_states --router logits--> topk_ids/topk_weights
+             --dispatch to selected experts-->
+             expert FFN output --combine--> next hidden_states</code></pre>
+      <p>RL 训练里，rollout 和 train 常不在同一个引擎里：rollout 是 vLLM，train 是 Megatron。即使权重刚同步过，下面这些因素也可能让 router 结果不同：kernel 数值差异、TP/EP/sequence parallel 排布差异、EPLB logical/physical expert 映射、训练 forward 与推理 forward 的微小实现差异，以及 actor 更新后旧数据重算时策略已经变了。</p>
+
+      <h3>9.2 Vime 的 R3 数据流</h3>
+      <div class="diagram">
+        <svg width="1160" height="470" viewBox="0 0 1160 470" role="img" aria-label="R3 flow">
+          <defs>
+            <marker id="arrow7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <style>.a7{marker-end:url(#arrow7)}</style>
+
+          <rect class="box box-cyan" x="46" y="58" width="245" height="104"></rect>
+          <text x="169" y="88" text-anchor="middle" font-size="14">vLLM rollout</text>
+          <text x="169" y="112" text-anchor="middle" font-size="12">BaseRouter.select_experts</text>
+          <text x="169" y="132" text-anchor="middle" font-size="12">capture logical topk_ids</text>
+          <text x="169" y="152" text-anchor="middle" font-size="12">shape: [tokens, layers, topk]</text>
+
+          <rect class="box box-green" x="361" y="58" width="245" height="104"></rect>
+          <text x="484" y="88" text-anchor="middle" font-size="14">HTTP response</text>
+          <text x="484" y="112" text-anchor="middle" font-size="12">routed_experts = base64(.npy)</text>
+          <text x="484" y="132" text-anchor="middle" font-size="12">Vime decode -&gt; np.ndarray</text>
+          <text x="484" y="152" text-anchor="middle" font-size="12">Sample.rollout_routed_experts</text>
+
+          <rect class="box box-orange" x="676" y="58" width="245" height="104"></rect>
+          <text x="799" y="88" text-anchor="middle" font-size="14">train_data</text>
+          <text x="799" y="112" text-anchor="middle" font-size="12">rollout_routed_experts</text>
+          <text x="799" y="132" text-anchor="middle" font-size="12">DP split + CPU/GPU transfer</text>
+          <text x="799" y="152" text-anchor="middle" font-size="12">Megatron fill_routing_replay</text>
+
+          <rect class="box box-red" x="436" y="292" width="300" height="104"></rect>
+          <text x="586" y="322" text-anchor="middle" font-size="14">Megatron MoE router</text>
+          <text x="586" y="346" text-anchor="middle" font-size="12">replay_forward / replay_backward</text>
+          <text x="586" y="366" text-anchor="middle" font-size="12">topk_ids 不重新 topk</text>
+          <text x="586" y="386" text-anchor="middle" font-size="12">scores.gather(1, replayed_ids)</text>
+
+          <path class="arrow a7" d="M291 110 H361"></path>
+          <path class="arrow a7" d="M606 110 H676"></path>
+          <path class="arrow a7" d="M799 162 C799 226 586 226 586 292"></path>
+        </svg>
+      </div>
+
+      <p>Vime 侧关键代码：</p>
+      <table>
+        <tr><th>阶段</th><th>代码</th><th>说明</th></tr>
+        <tr><td>启动 vLLM</td><td><code>VLLMEngine.launch_server_process</code></td><td>如果 <code>--use-rollout-routing-replay</code>，给 vLLM 加 <code>--enable-return-routed-experts</code>。</td></tr>
+        <tr><td>解析 vLLM 返回</td><td><code>vllm_rollout._apply_vllm_routed_experts</code></td><td>把 <code>choices[0].routed_experts</code> 从 base64 npy 解码成 ndarray，并检查 shape 是 <code>(len(tokens)-1, num_layers, topk)</code>。</td></tr>
+        <tr><td>进入训练数据</td><td><code>RolloutManager._convert_samples_to_train_data</code></td><td>强制每个 sample 都有 <code>rollout_routed_experts</code>，否则报错。</td></tr>
+        <tr><td>填充 replay buffer</td><td><code>MegatronTrainRayActor.fill_routing_replay</code></td><td>按 micro-batch、CP/TP/PP/VPP 排布把每层 top-k expert id 录入 <code>RoutingReplay</code>。</td></tr>
+        <tr><td>重放 router</td><td><code>slime/utils/routing_replay.py</code></td><td>训练 forward/backward 时不再用当前 top-k 结果，而是 pop rollout 阶段记录的 top-k ids。</td></tr>
+      </table>
+
+      <h3>9.3 Megatron 训练时怎么重放</h3>
+      <p><code>RoutingReplay</code> 的核心很小：record 时把 top-k expert id 放到 CPU pinned memory；replay 时按 forward/backward 顺序取回来放到当前 GPU。</p>
+      <pre><code># slime/utils/routing_replay.py
+if ROUTING_REPLAY_STAGE == "record":
+    probs, top_indices = old_compute_topk(scores, topk, ...)
+    ROUTING_REPLAY.record(top_indices)
+elif ROUTING_REPLAY_STAGE in ["replay_forward", "replay_backward"]:
+    top_indices = ROUTING_REPLAY.pop_forward()  # 或 pop_backward
+    probs = scores.gather(1, top_indices)</code></pre>
+      <p>注意这里不是完全绕过 router。Megatron 仍然计算当前 router 的 <code>scores</code>，只是 expert id 使用 rollout 的 <code>top_indices</code>。然后用 <code>scores.gather(1, top_indices)</code> 取当前模型对这些 experts 的权重。这样梯度仍然能回到当前 router logits，但专家选择路径和 rollout 对齐。</p>
+
+      <h3>9.4 为什么要按 layer / token 对齐</h3>
+      <p>vLLM 返回的 routed experts shape 是 <code>[len(tokens)-1, num_layers, topk]</code>。这里是 <code>len(tokens)-1</code>，因为对自回归模型来说，第 <code>i</code> 个 forward 位置产生的是下一个 token 的 logits；最后一个刚采样出来的 token 还没有被模型 forward 过。Vime 在 <code>_apply_vllm_routed_experts</code> 里用 <code>expected_rows = len(sample.tokens) - 1</code> 严格校验。</p>
+      <p>Megatron 侧还要处理 CP 和 sequence packing：训练 batch 可能把多个样本拼成一个 <code>thd</code> token stream，也可能把长序列切到多个 CP rank。<code>fill_routing_replay</code> 会先把每个 sample 的 routed experts pad 到与 token 对齐，再调用 <code>slice_with_cp</code>，最后按 Megatron 实际构建的 layer 顺序写入每个 MoE 层对应的 replay buffer。</p>
+
+      <h3>9.5 vLLM 侧是怎么做的</h3>
+      <p>vLLM 的开关是 <code>--enable-return-routed-experts</code>，对应 <code>ModelConfig.enable_return_routed_experts</code>。打开后，GPU worker 初始化 <code>RoutedExpertsCapturer</code>，并把 capture callback 绑定到每个 <code>FusedMoE</code> 的 router 上。</p>
+      <pre><code># vllm/v1/worker/gpu_model_runner.py
+for module in static_forward_context.values():
+    if isinstance(module, FusedMoE) and isinstance(module.router, BaseRouter):
+        module.router.set_capture_fn(lambda topk_ids: capturer.capture(layer_id, topk_ids))
+
+# vllm/model_executor/layers/fused_moe/router/base_router.py
+topk_weights, topk_ids = self._compute_routing(...)
+if self.capture_fn is not None:
+    self.capture_fn(topk_ids)        # 捕获 logical ids，发生在 EPLB mapping 之前
+topk_ids = self._apply_eplb_mapping(topk_ids)</code></pre>
+      <p>这里“捕获 logical ids”很重要。vLLM 如果启用 EPLB，实际执行 expert 可能是 physical expert slot；但训练重放需要的是模型语义上的 logical expert id，否则 Megatron 侧没有同一个 physical slot 映射。</p>
+      <p>vLLM 内部不是把每个请求的 routed experts 直接挂在 request 上，而是先按 KV cache slot 存：</p>
+      <ul>
+        <li><code>RoutedExpertsCapturer.device_buffer</code>：GPU 上的 step buffer，shape 为 <code>[max_num_batched_tokens, num_layers, topk]</code>。</li>
+        <li><code>GPUModelRunner</code>：每步把 device buffer 和 attention <code>slot_mapping</code> 拷到 CPU。</li>
+        <li><code>Scheduler.RoutedExpertsManager</code>：按 physical KV slot 写入 <code>routed_experts_by_slot</code>，完成/停止请求时用 block ids 还原该请求的 token 顺序。</li>
+        <li>OpenAI / disagg serving：把 ndarray 保存成 <code>.npy</code> 字节流，再 base64 放进响应的 <code>routed_experts</code> 字段。</li>
+      </ul>
+      <div class="note warn">
+        vLLM 当前实现对 R3 有约束：<code>enable_return_routed_experts</code> 不支持 DCP/PCP 这类 context parallel；slot-indexed CPU buffer 也会增加内存占用。Vime 文档里说 R3 依赖 vLLM 0.22+ 的 <code>--enable-return-routed-experts</code> 返回契约。
+      </div>
+    </section>
+
     <section id="features">
-      <h2>8. Vime / slime 特性清单</h2>
+      <h2>10. Vime / slime 特性清单</h2>
       <table>
         <tr><th>特性</th><th>入口参数 / 代码</th><th>说明</th></tr>
         <tr><td>vLLM rollout 后端</td><td><code>slime/backends/vllm_utils</code>、<code>slime/rollout/vllm_rollout.py</code></td><td>默认 rollout function 已改为 vLLM；vLLM 原生参数通过 <code>--vllm-*</code> 透传。</td></tr>
@@ -686,7 +932,7 @@ pg_loss = clipped_policy_gradient(ppo_kl, advantages)</code></pre>
     </section>
 
     <section id="extension">
-      <h2>9. 二次开发入口</h2>
+      <h2>11. 二次开发入口</h2>
       <table>
         <tr><th>想改什么</th><th>优先入口</th><th>函数签名 / 注意点</th></tr>
         <tr><td>自定义 rollout 流程</td><td><code>--rollout-function-path</code></td><td><code>generate_rollout(args, rollout_id, data_source, evaluation=False)</code>，需要返回含 <code>Sample</code> 的 <code>RolloutFnTrainOutput</code>。</td></tr>
@@ -700,7 +946,7 @@ pg_loss = clipped_policy_gradient(ppo_kl, advantages)</code></pre>
     </section>
 
     <section id="checklist">
-      <h2>10. 代码核对清单</h2>
+      <h2>12. 代码核对清单</h2>
       <table>
         <tr><th>问题</th><th>看哪里</th><th>结论</th></tr>
         <tr><td>Vime 的默认 rollout 后端是不是 vLLM？</td><td><code>slime/utils/arguments.py</code> 的 <code>--rollout-function-path</code></td><td>默认是 <code>slime.rollout.vllm_rollout.generate_rollout</code>。</td></tr>
@@ -710,6 +956,10 @@ pg_loss = clipped_policy_gradient(ppo_kl, advantages)</code></pre>
         <tr><td>dict 如何分给 Megatron DP rank？</td><td><code>RolloutManager._split_train_data_by_dp</code></td><td>按 DP 数切 partition，可按 sequence length balance。</td></tr>
         <tr><td>Megatron 哪里把 list token pack 成 batch？</td><td><code>megatron_utils/data.py::get_batch</code></td><td><code>thd</code> 模式拼成 <code>[1, T_padded]</code> 并构造 <code>PackedSeqParams</code>。</td></tr>
         <tr><td>GRPO/PPO advantage 在哪里算？</td><td><code>megatron_utils/loss.py::compute_advantages_and_returns</code></td><td>按 <code>args.advantage_estimator</code> 分支。</td></tr>
+        <tr><td>policy ratio 和 clip 在哪里算？</td><td><code>slime/utils/ppo_utils.py::compute_policy_loss</code></td><td><code>ratio = exp(log_probs - old_log_probs)</code>，再按 <code>eps_clip</code> 限制更新幅度。</td></tr>
+        <tr><td>rollout 指标在哪里聚合？</td><td><code>slime/ray/rollout.py::compute_metrics_from_samples</code>、<code>compute_perf_metrics_from_samples</code></td><td>response length、truncated ratio、zero std、reward category、吞吐等都在这里。</td></tr>
+        <tr><td>R3 的 routed experts 怎么进 Sample？</td><td><code>vllm_rollout._apply_vllm_routed_experts</code></td><td>解码 <code>choices[0].routed_experts</code> 的 base64 npy，校验 <code>[len(tokens)-1, layers, topk]</code>。</td></tr>
+        <tr><td>vLLM 哪里捕获 MoE top-k experts？</td><td><code>vllm/model_executor/layers/fused_moe/router/base_router.py</code>、<code>routed_experts_capturer.py</code></td><td>在 EPLB logical-to-physical mapping 前捕获 logical expert ids。</td></tr>
         <tr><td>权重同步给 vLLM 在哪里？</td><td><code>MegatronTrainRayActor.update_weights</code></td><td>colocate 走 <code>UpdateWeightFromTensor</code>，分离走 <code>UpdateWeightFromDistributed</code>。</td></tr>
       </table>
 
@@ -722,6 +972,9 @@ pg_loss = clipped_policy_gradient(ppo_kl, advantages)</code></pre>
         <li><code>vime/slime/backends/vllm_utils/vllm_engine.py</code>、<code>vime/slime/backends/vllm_utils/arguments.py</code></li>
         <li><code>vime/slime/backends/megatron_utils/actor.py</code>、<code>data.py</code>、<code>loss.py</code>、<code>model.py</code></li>
         <li><code>vime/slime/backends/megatron_utils/update_weight/update_weight_from_distributed.py</code>、<code>update_weight_from_tensor.py</code></li>
+        <li><code>vime/slime/utils/ppo_utils.py</code>、<code>vime/slime/utils/routing_replay.py</code></li>
+        <li><code>vllm/vllm/model_executor/layers/fused_moe/routed_experts_capturer.py</code>、<code>router/base_router.py</code></li>
+        <li><code>vllm/vllm/v1/core/sched/scheduler.py</code>、<code>vllm/vllm/v1/worker/gpu_model_runner.py</code></li>
       </ul>
     </section>
   </main>
