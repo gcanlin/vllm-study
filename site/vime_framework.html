@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vime 框架导读：从 train.py 到 vLLM Rollout</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #607083;
+      --line: #d8e0ea;
+      --code-bg: #10151f;
+      --code-ink: #d9e7ff;
+      --blue: #2563eb;
+      --green: #16825d;
+      --orange: #b96a13;
+      --red: #b94747;
+      --violet: #6d5bd0;
+      --cyan: #087d8f;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.68 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+    }
+    header {
+      padding: 32px 40px 24px;
+      background: #111827;
+      color: #fff;
+    }
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    header p { margin: 4px 0; max-width: 1120px; color: #c9d4e3; }
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 60px;
+    }
+    section {
+      margin: 0 0 20px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #eef2f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-size: 13px;
+      line-height: 1.52;
+    }
+    pre code { padding: 0; background: transparent; color: inherit; font-size: inherit; }
+    table {
+      width: 100%;
+      margin: 12px 0;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { background: #f0f4f9; text-align: left; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+    .toc {
+      columns: 2;
+      padding-left: 18px;
+    }
+    .toc li { break-inside: avoid; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .note {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: #eef5ff;
+      color: #1c314f;
+    }
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7eb;
+      color: #4f310f;
+    }
+    .small { color: var(--muted); font-size: 13px; }
+    .pill {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .diagram {
+      width: 100%;
+      margin: 12px 0;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+    svg { display: block; min-width: 980px; }
+    .box { fill: white; stroke: #9aa8ba; stroke-width: 1.2; rx: 8; }
+    .box-blue { fill: #edf4ff; stroke: var(--blue); }
+    .box-green { fill: #edf9f5; stroke: var(--green); }
+    .box-orange { fill: #fff4e5; stroke: var(--orange); }
+    .box-violet { fill: #f3efff; stroke: var(--violet); }
+    .box-red { fill: #fff0f0; stroke: var(--red); }
+    .box-cyan { fill: #eaf9fb; stroke: var(--cyan); }
+    .arrow { stroke: #405166; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .dash { stroke-dasharray: 5 5; }
+    @media (max-width: 860px) {
+      header { padding: 24px 18px; }
+      main { padding: 18px 12px 44px; }
+      section { padding: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .toc { columns: 1; }
+    }
+  </style>
+  <link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+  <nav class="study-topnav" aria-label="Study note navigation">
+    <a class="study-topnav__brand" href="./">vLLM Study</a>
+    <div class="study-topnav__links">
+      <a class="study-topnav__link" href="./">DeepSeek V3 FusedMoE</a>
+      <a class="study-topnav__link" href="./qwen3_model_runner.html">Qwen3 Runner</a>
+      <a class="study-topnav__link" href="./qwen3_structure.html">Qwen3 Structure</a>
+      <a class="study-topnav__link" href="./vllm_cp_pcp_dcp.html">CP / PCP / DCP</a>
+      <a class="study-topnav__link" href="./vllm_prefix_cache.html">Prefix Cache</a>
+      <a class="study-topnav__link" href="./vllm_vit_dp.html">ViT DP</a>
+      <a class="study-topnav__link" href="./vime_framework.html" aria-current="page">Vime</a>
+    </div>
+  </nav>
+
+  <header>
+    <h1>Vime 框架导读：从 train.py 到 vLLM Rollout</h1>
+    <p>目标：按代码路径解释 Vime 的训练闭环、每一步数据如何变化、它如何把 vLLM 接进 slime，以及 Megatron 在这里承担什么角色。</p>
+    <p class="small">代码基于本地 <code>vime/</code>。Vime 是 slime fork，当前重点是把 rollout 后端切到 vLLM + vllm-router，仍保留不少 slime / sglang 命名和兼容层。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>目录</h2>
+      <ol class="toc">
+        <li><a href="#how-to-run">先看怎么用</a></li>
+        <li><a href="#architecture">整体架构</a></li>
+        <li><a href="#train-flow">train.py 主流程图</a></li>
+        <li><a href="#data-flow">训练数据如何流动</a></li>
+        <li><a href="#vllm">Vime 如何与 vLLM 交互</a></li>
+        <li><a href="#weight-sync">训练权重如何同步给 vLLM</a></li>
+        <li><a href="#megatron">Megatron 简明科普</a></li>
+        <li><a href="#features">Vime / slime 特性清单</a></li>
+        <li><a href="#extension">二次开发入口</a></li>
+        <li><a href="#checklist">代码核对清单</a></li>
+      </ol>
+    </section>
+
+    <section id="how-to-run">
+      <h2>1. 先看怎么用</h2>
+      <p>Vime 的入口仍然很直接：用户准备 Megatron 格式训练 checkpoint、HF checkpoint/tokenizer、prompt 数据，然后运行 <code>python train.py ...</code>。关键参数可以按四组理解：</p>
+      <table>
+        <tr><th>参数组</th><th>典型参数</th><th>作用</th></tr>
+        <tr><td>资源分配</td><td><code>--actor-num-nodes</code>、<code>--actor-num-gpus-per-node</code>、<code>--rollout-num-gpus</code>、<code>--rollout-num-gpus-per-engine</code>、<code>--colocate</code></td><td>Ray placement group 里哪些 GPU 给 Megatron 训练，哪些 GPU 给 vLLM rollout。<code>rollout-num-gpus-per-engine</code> 基本等价每个 vLLM engine 的 tensor parallel size。</td></tr>
+        <tr><td>模型与 checkpoint</td><td><code>--hf-checkpoint</code>、<code>--load</code>、<code>--ref-load</code>、<code>--save</code></td><td><code>hf-checkpoint</code> 给 vLLM / tokenizer / processor 用；训练权重来自 Megatron checkpoint，并在启动后同步给 vLLM。</td></tr>
+        <tr><td>rollout 与数据</td><td><code>--prompt-data</code>、<code>--input-key</code>、<code>--label-key</code>、<code>--rollout-batch-size</code>、<code>--n-samples-per-prompt</code></td><td>每轮取多少 prompt、每个 prompt 采几条 response、如何算 reward。</td></tr>
+        <tr><td>RL 与训练</td><td><code>--advantage-estimator</code>、<code>--global-batch-size</code>、<code>--num-steps-per-rollout</code>、Megatron 并行参数</td><td>控制 GRPO / GSPO / PPO / REINFORCE++，以及 Megatron TP/PP/CP/EP、micro-batch、动态 batch 等。</td></tr>
+      </table>
+      <div class="note">
+        一个最重要的约束：<code>rollout_batch_size * n_samples_per_prompt</code> 是一轮 rollout 产生的样本数；<code>global_batch_size * num_steps_per_rollout</code> 是一轮训练消费的样本数。默认 on-policy 训练里两边需要对齐。
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>2. 整体架构</h2>
+      <p>Vime 的核心不是单个 trainer，而是一个由 Ray 编排的训推闭环：</p>
+      <div class="diagram">
+        <svg width="1160" height="390" viewBox="0 0 1160 390" role="img" aria-label="Vime architecture">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+
+          <rect class="box box-violet" x="40" y="42" width="220" height="92"></rect>
+          <text x="150" y="72" text-anchor="middle" font-size="15">train.py Driver</text>
+          <text x="150" y="96" text-anchor="middle" font-size="12">parse args / Ray PG</text>
+          <text x="150" y="116" text-anchor="middle" font-size="12">rollout loop</text>
+
+          <rect class="box box-green" x="340" y="38" width="260" height="106"></rect>
+          <text x="470" y="68" text-anchor="middle" font-size="15">RolloutManager</text>
+          <text x="470" y="92" text-anchor="middle" font-size="12">DataSource / filters / RM</text>
+          <text x="470" y="112" text-anchor="middle" font-size="12">Sample -&gt; train_data</text>
+          <text x="470" y="132" text-anchor="middle" font-size="12">Ray object refs by DP</text>
+
+          <rect class="box box-cyan" x="700" y="24" width="205" height="78"></rect>
+          <text x="802" y="54" text-anchor="middle" font-size="15">vllm-router</text>
+          <text x="802" y="78" text-anchor="middle" font-size="12">/workers / inference route</text>
+
+          <rect class="box box-blue" x="945" y="24" width="175" height="78"></rect>
+          <text x="1032" y="54" text-anchor="middle" font-size="15">vLLM servers</text>
+          <text x="1032" y="78" text-anchor="middle" font-size="12">vllm serve subprocess</text>
+
+          <rect class="box box-orange" x="340" y="230" width="260" height="105"></rect>
+          <text x="470" y="260" text-anchor="middle" font-size="15">RayTrainGroup</text>
+          <text x="470" y="284" text-anchor="middle" font-size="12">MegatronTrainRayActor x world_size</text>
+          <text x="470" y="304" text-anchor="middle" font-size="12">actor / critic / ref / teacher</text>
+          <text x="470" y="324" text-anchor="middle" font-size="12">forward, advantage, train</text>
+
+          <rect class="box box-red" x="700" y="230" width="260" height="105"></rect>
+          <text x="830" y="260" text-anchor="middle" font-size="15">Weight Updater</text>
+          <text x="830" y="284" text-anchor="middle" font-size="12">Megatron weights -&gt; HF names</text>
+          <text x="830" y="304" text-anchor="middle" font-size="12">IPC for colocate / NCCL otherwise</text>
+          <text x="830" y="324" text-anchor="middle" font-size="12">vLLM HTTP control plane</text>
+
+          <path class="arrow" d="M260 88 H340"></path>
+          <path class="arrow" d="M600 90 C650 90 650 64 700 64"></path>
+          <path class="arrow" d="M905 64 H945"></path>
+          <path class="arrow" d="M470 144 V230"></path>
+          <path class="arrow" d="M600 282 H700"></path>
+          <path class="arrow dash" d="M830 230 C830 168 1032 168 1032 102"></path>
+          <path class="arrow dash" d="M470 230 C430 190 430 170 470 144"></path>
+
+          <text x="640" y="58" font-size="12" fill="#607083">HTTP generate</text>
+          <text x="612" y="276" font-size="12" fill="#607083">trained params</text>
+          <text x="910" y="168" font-size="12" fill="#607083">update_weights / sleep / wake</text>
+        </svg>
+      </div>
+
+      <table>
+        <tr><th>模块</th><th>代码路径</th><th>职责</th></tr>
+        <tr><td>入口</td><td><code>vime/train.py</code></td><td>创建资源、启动 rollout、启动训练 actor、循环执行 generate/train/save/eval/weight sync。</td></tr>
+        <tr><td>Ray 编排</td><td><code>slime/ray/placement_group.py</code>、<code>rollout.py</code>、<code>actor_group.py</code></td><td>固定 GPU 排布，创建 Ray actor，把 rollout server 和训练进程连起来。</td></tr>
+        <tr><td>vLLM 后端</td><td><code>slime/backends/vllm_utils/</code>、<code>slime/rollout/vllm_rollout.py</code></td><td>启动 <code>vllm serve</code>、注册 router、发 HTTP 请求、解析 token/logprob/routed experts。</td></tr>
+        <tr><td>训练后端</td><td><code>slime/backends/megatron_utils/</code></td><td>Megatron 初始化、数据 packing、logprob/value/advantage/loss、checkpoint、权重同步。</td></tr>
+        <tr><td>数据抽象</td><td><code>slime/utils/data.py</code>、<code>slime/utils/types.py</code>、<code>slime/rollout/data_source.py</code></td><td>把 jsonl/parquet 行转成 <code>Sample</code>，再把 rollout 后的 <code>Sample</code> 转成训练 batch。</td></tr>
+      </table>
+    </section>
+
+    <section id="train-flow">
+      <h2>3. train.py 主流程图</h2>
+      <p><code>train.py</code> 的逻辑很薄，但它定义了整个系统的时序。可以把一轮训练看成：生成新数据、训练 Megatron、把新权重推回 vLLM。</p>
+      <div class="diagram">
+        <svg width="1160" height="620" viewBox="0 0 1160 620" role="img" aria-label="train.py flow">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <style>.a2{marker-end:url(#arrow2)}</style>
+
+          <rect class="box box-violet" x="48" y="34" width="215" height="70"></rect>
+          <text x="155" y="64" text-anchor="middle" font-size="14">parse_args()</text>
+          <text x="155" y="86" text-anchor="middle" font-size="12">Megatron + Vime + vLLM args</text>
+
+          <rect class="box box-violet" x="328" y="34" width="215" height="70"></rect>
+          <text x="435" y="64" text-anchor="middle" font-size="14">create_placement_groups</text>
+          <text x="435" y="86" text-anchor="middle" font-size="12">actor / rollout GPU slots</text>
+
+          <rect class="box box-green" x="608" y="34" width="215" height="70"></rect>
+          <text x="715" y="64" text-anchor="middle" font-size="14">create_rollout_manager</text>
+          <text x="715" y="86" text-anchor="middle" font-size="12">router + vLLM engines + data source</text>
+
+          <rect class="box box-orange" x="888" y="34" width="215" height="70"></rect>
+          <text x="995" y="64" text-anchor="middle" font-size="14">create_training_models</text>
+          <text x="995" y="86" text-anchor="middle" font-size="12">actor / critic Megatron ranks</text>
+
+          <path class="arrow a2" d="M263 69 H328"></path>
+          <path class="arrow a2" d="M543 69 H608"></path>
+          <path class="arrow a2" d="M823 69 H888"></path>
+
+          <rect class="box box-red" x="376" y="148" width="410" height="62"></rect>
+          <text x="581" y="174" text-anchor="middle" font-size="14">actor_model.update_weights()</text>
+          <text x="581" y="194" text-anchor="middle" font-size="12">启动后先把 Megatron actor 参数同步给 vLLM</text>
+          <path class="arrow a2" d="M995 104 C995 138 786 138 786 179"></path>
+
+          <rect class="box" x="80" y="258" width="1000" height="304"></rect>
+          <text x="100" y="288" font-size="15" font-weight="600">for rollout_id in range(start_rollout_id, num_rollout)</text>
+
+          <rect class="box box-green" x="126" y="318" width="192" height="64"></rect>
+          <text x="222" y="344" text-anchor="middle" font-size="14">rollout_manager.generate</text>
+          <text x="222" y="364" text-anchor="middle" font-size="12">返回 rollout_data_ref by DP</text>
+
+          <rect class="box box-orange" x="372" y="318" width="192" height="64"></rect>
+          <text x="468" y="344" text-anchor="middle" font-size="14">critic.async_train?</text>
+          <text x="468" y="364" text-anchor="middle" font-size="12">PPO 才有 values</text>
+
+          <rect class="box box-orange" x="618" y="318" width="192" height="64"></rect>
+          <text x="714" y="344" text-anchor="middle" font-size="14">actor.async_train</text>
+          <text x="714" y="364" text-anchor="middle" font-size="12">logprob / advantage / loss</text>
+
+          <rect class="box box-violet" x="864" y="318" width="170" height="64"></rect>
+          <text x="949" y="344" text-anchor="middle" font-size="14">save?</text>
+          <text x="949" y="364" text-anchor="middle" font-size="12">checkpoint + dataset state</text>
+
+          <path class="arrow a2" d="M318 350 H372"></path>
+          <path class="arrow a2" d="M564 350 H618"></path>
+          <path class="arrow a2" d="M810 350 H864"></path>
+
+          <rect class="box box-cyan" x="180" y="438" width="200" height="64"></rect>
+          <text x="280" y="464" text-anchor="middle" font-size="14">offload / onload</text>
+          <text x="280" y="484" text-anchor="middle" font-size="12">colocate 时交替释放显存</text>
+
+          <rect class="box box-red" x="480" y="438" width="210" height="64"></rect>
+          <text x="585" y="464" text-anchor="middle" font-size="14">actor.update_weights</text>
+          <text x="585" y="484" text-anchor="middle" font-size="12">新 actor 参数推给 vLLM</text>
+
+          <rect class="box box-green" x="790" y="438" width="190" height="64"></rect>
+          <text x="885" y="464" text-anchor="middle" font-size="14">eval?</text>
+          <text x="885" y="484" text-anchor="middle" font-size="12">评估集 rollout + log</text>
+
+          <path class="arrow a2" d="M949 382 C949 410 280 410 280 438"></path>
+          <path class="arrow a2" d="M380 470 H480"></path>
+          <path class="arrow a2" d="M690 470 H790"></path>
+          <path class="arrow a2" d="M885 502 C885 546 128 546 128 350"></path>
+
+          <rect class="box box-violet" x="462" y="584" width="236" height="30"></rect>
+          <text x="580" y="604" text-anchor="middle" font-size="13">dispose rollout engines + finish tracking</text>
+        </svg>
+      </div>
+
+      <pre><code># vime/train.py 的主循环骨架
+rollout_data_ref = ray.get(rollout_manager.generate.remote(rollout_id))
+
+if args.use_critic:
+    value_refs = critic_model.async_train(rollout_id, rollout_data_ref)
+    ray.get(actor_model.async_train(rollout_id, rollout_data_ref, external_data=value_refs))
+else:
+    ray.get(actor_model.async_train(rollout_id, rollout_data_ref))
+
+actor_model.update_weights()
+ray.get(rollout_manager.eval.remote(rollout_id))  # 按 interval 触发</code></pre>
+    </section>
+
+    <section id="data-flow">
+      <h2>4. 训练数据如何流动</h2>
+      <p>Vime 的数据单位是 <code>Sample</code>。它从 prompt 开始，经过 vLLM 生成后带上 response、tokens、reward、logprobs，最后被 RolloutManager 转成 Megatron 可消费的 dict。</p>
+
+      <div class="diagram">
+        <svg width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-label="Vime data flow">
+          <defs>
+            <marker id="arrow3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <style>.a3{marker-end:url(#arrow3)}</style>
+
+          <rect class="box box-blue" x="40" y="54" width="190" height="80"></rect>
+          <text x="135" y="82" text-anchor="middle" font-size="14">jsonl / parquet row</text>
+          <text x="135" y="105" text-anchor="middle" font-size="12">{prompt, label, metadata}</text>
+
+          <rect class="box box-green" x="290" y="42" width="220" height="104"></rect>
+          <text x="400" y="70" text-anchor="middle" font-size="14">Dataset</text>
+          <text x="400" y="92" text-anchor="middle" font-size="12">chat template / multimodal parse</text>
+          <text x="400" y="112" text-anchor="middle" font-size="12">filter long prompt</text>
+          <text x="400" y="132" text-anchor="middle" font-size="12">origin_samples: list[Sample]</text>
+
+          <rect class="box box-green" x="570" y="42" width="220" height="104"></rect>
+          <text x="680" y="70" text-anchor="middle" font-size="14">RolloutDataSource</text>
+          <text x="680" y="92" text-anchor="middle" font-size="12">get_samples(batch)</text>
+          <text x="680" y="112" text-anchor="middle" font-size="12">deepcopy per n_samples</text>
+          <text x="680" y="132" text-anchor="middle" font-size="12">list[list[Sample]]</text>
+
+          <rect class="box box-cyan" x="850" y="42" width="260" height="104"></rect>
+          <text x="980" y="70" text-anchor="middle" font-size="14">vllm_rollout.generate_and_rm_group</text>
+          <text x="980" y="92" text-anchor="middle" font-size="12">async generate + reward</text>
+          <text x="980" y="112" text-anchor="middle" font-size="12">Sample.tokens / response / reward</text>
+          <text x="980" y="132" text-anchor="middle" font-size="12">rollout_log_probs / routed_experts</text>
+
+          <path class="arrow a3" d="M230 94 H290"></path>
+          <path class="arrow a3" d="M510 94 H570"></path>
+          <path class="arrow a3" d="M790 94 H850"></path>
+
+          <rect class="box box-orange" x="155" y="246" width="265" height="116"></rect>
+          <text x="288" y="274" text-anchor="middle" font-size="14">RolloutManager._convert</text>
+          <text x="288" y="298" text-anchor="middle" font-size="12">flatten groups</text>
+          <text x="288" y="318" text-anchor="middle" font-size="12">reward normalization</text>
+          <text x="288" y="338" text-anchor="middle" font-size="12">loss_masks / train_data dict</text>
+
+          <rect class="box box-orange" x="500" y="246" width="265" height="116"></rect>
+          <text x="633" y="274" text-anchor="middle" font-size="14">_split_train_data_by_dp</text>
+          <text x="633" y="298" text-anchor="middle" font-size="12">balance by total_lengths?</text>
+          <text x="633" y="318" text-anchor="middle" font-size="12">partition per DP rank</text>
+          <text x="633" y="338" text-anchor="middle" font-size="12">Box(ray.put(rollout_data))</text>
+
+          <rect class="box box-violet" x="845" y="246" width="250" height="116"></rect>
+          <text x="970" y="274" text-anchor="middle" font-size="14">MegatronTrainRayActor._get_rollout_data</text>
+          <text x="970" y="298" text-anchor="middle" font-size="12">ray.get local DP partition</text>
+          <text x="970" y="318" text-anchor="middle" font-size="12">tokens / masks -&gt; CUDA tensors</text>
+          <text x="970" y="338" text-anchor="middle" font-size="12">CP slice / logprob align</text>
+
+          <path class="arrow a3" d="M980 146 C980 204 288 204 288 246"></path>
+          <path class="arrow a3" d="M420 304 H500"></path>
+          <path class="arrow a3" d="M765 304 H845"></path>
+
+          <rect class="box box-red" x="350" y="420" width="500" height="72"></rect>
+          <text x="600" y="448" text-anchor="middle" font-size="14">DataIterator + get_batch</text>
+          <text x="600" y="470" text-anchor="middle" font-size="12">micro-batch packing: tokens [1,T_padded] / PackedSeqParams / full_loss_masks</text>
+          <path class="arrow a3" d="M970 362 C970 400 600 400 600 420"></path>
+        </svg>
+      </div>
+
+      <h3>4.1 Sample 字段</h3>
+      <table>
+        <tr><th>阶段</th><th>关键字段</th><th>来源</th></tr>
+        <tr><td>prompt 初始化</td><td><code>prompt</code>、<code>label</code>、<code>metadata</code>、<code>multimodal_inputs</code></td><td><code>slime/utils/data.py::Dataset</code> 读取 jsonl/parquet，必要时调用 tokenizer chat template 和 processor。</td></tr>
+        <tr><td>分组采样</td><td><code>group_index</code>、<code>index</code>、每个 prompt 复制 <code>n_samples_per_prompt</code> 份</td><td><code>RolloutDataSource.get_samples</code>。</td></tr>
+        <tr><td>vLLM 生成</td><td><code>tokens</code>、<code>response</code>、<code>response_length</code>、<code>status</code>、<code>rollout_log_probs</code></td><td><code>vllm_rollout.generate</code> 调 <code>/inference/v1/generate</code> 后解析 <code>choices[0]</code>。</td></tr>
+        <tr><td>reward</td><td><code>reward</code></td><td><code>async_rm</code> / <code>batched_async_rm</code> / 自定义 reward；group RM 可在整组生成后统一算。</td></tr>
+        <tr><td>训练附加</td><td><code>loss_mask</code>、<code>teacher_log_probs</code>、<code>rollout_routed_experts</code></td><td>partial rollout、OPD、MoE routing replay 等特性按需写入。</td></tr>
+      </table>
+
+      <h3>4.2 train_data 字典</h3>
+      <p><code>RolloutManager._convert_samples_to_train_data</code> 默认产物大概是：</p>
+      <pre><code>{
+  "tokens": [[prompt_ids..., response_ids...], ...],
+  "response_lengths": [R0, R1, ...],
+  "rewards": [advantage_input_reward0, ...],
+  "raw_reward": [raw_reward0, ...],
+  "truncated": [0_or_1, ...],
+  "sample_indices": [sample.index, ...],
+  "loss_masks": [[1, 1, 0, ...], ...],
+  "rollout_log_probs": [[lp_for_response_token...], ...],      # 可选
+  "rollout_routed_experts": [np.ndarray[R-1, layers, topk], ...] # 可选
+}</code></pre>
+      <p>之后 <code>_split_train_data_by_dp</code> 会按 data parallel size 拆成多个 Ray object。Megatron 每个 DP rank 只拿自己那份，避免所有训练 rank 都处理全量数据。</p>
+
+      <h3>4.3 Megatron 侧 packing 后的 shape</h3>
+      <table>
+        <tr><th>字段</th><th>进入 Megatron 前</th><th><code>get_batch</code> 后</th><th>含义</th></tr>
+        <tr><td><code>tokens</code></td><td>每个 sample 一个 1D tensor，长度 <code>prompt_len + response_len</code></td><td><code>thd</code>: <code>[1, T_padded]</code>；<code>bshd</code>: <code>[B, S_padded]</code></td><td>Vime 默认强调 data packing，<code>thd</code> 下 T 是 micro-batch 内 token 拼接后的长度。</td></tr>
+        <tr><td><code>full_loss_masks</code></td><td>每个 sample 长度为 <code>response_len</code></td><td>与 <code>tokens</code> 同 shape</td><td>prompt 区域和最后一个位置补 0，只在 response token 上算 loss。</td></tr>
+        <tr><td><code>packed_seq_params</code></td><td>无</td><td><code>PackedSeqParams(cu_seqlens_q, max_seqlen_q, qkv_format="thd")</code></td><td>告诉 Megatron/Transformer Engine 每条序列的边界。</td></tr>
+      </table>
+    </section>
+
+    <section id="vllm">
+      <h2>5. Vime 如何与 vLLM 交互</h2>
+      <p>Vime 和 vLLM 的边界非常清楚：Vime 用 Ray actor 管 vLLM 进程生命周期，用 HTTP 调 vLLM server 的控制面和推理面。</p>
+
+      <div class="diagram">
+        <svg width="1140" height="430" viewBox="0 0 1140 430" role="img" aria-label="vLLM interaction">
+          <defs>
+            <marker id="arrow4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <style>.a4{marker-end:url(#arrow4)}</style>
+
+          <rect class="box box-green" x="54" y="54" width="245" height="96"></rect>
+          <text x="176" y="84" text-anchor="middle" font-size="14">RolloutManager.start_rollout_servers</text>
+          <text x="176" y="108" text-anchor="middle" font-size="12">start router</text>
+          <text x="176" y="128" text-anchor="middle" font-size="12">start ServerGroup engines</text>
+
+          <rect class="box box-cyan" x="392" y="36" width="250" height="84"></rect>
+          <text x="517" y="66" text-anchor="middle" font-size="14">vllm-router</text>
+          <text x="517" y="90" text-anchor="middle" font-size="12">POST /workers 注册 worker</text>
+
+          <rect class="box box-blue" x="755" y="36" width="280" height="84"></rect>
+          <text x="895" y="66" text-anchor="middle" font-size="14">VLLMEngine Ray actor</text>
+          <text x="895" y="90" text-anchor="middle" font-size="12">spawn: vllm serve &lt;hf_checkpoint&gt;</text>
+
+          <path class="arrow a4" d="M299 92 H392"></path>
+          <path class="arrow a4" d="M755 78 H642"></path>
+
+          <rect class="box box-orange" x="54" y="250" width="245" height="96"></rect>
+          <text x="176" y="280" text-anchor="middle" font-size="14">vllm_rollout.generate</text>
+          <text x="176" y="304" text-anchor="middle" font-size="12">prepare token_ids</text>
+          <text x="176" y="324" text-anchor="middle" font-size="12">build sampling_params</text>
+
+          <rect class="box box-cyan" x="392" y="238" width="250" height="120"></rect>
+          <text x="517" y="268" text-anchor="middle" font-size="14">HTTP inference</text>
+          <text x="517" y="292" text-anchor="middle" font-size="12">POST /inference/v1/generate</text>
+          <text x="517" y="312" text-anchor="middle" font-size="12">MM: /v1/chat/completions/render</text>
+          <text x="517" y="332" text-anchor="middle" font-size="12">consistent hash header 可选</text>
+
+          <rect class="box box-green" x="755" y="250" width="280" height="96"></rect>
+          <text x="895" y="280" text-anchor="middle" font-size="14">parse response</text>
+          <text x="895" y="304" text-anchor="middle" font-size="12">choice.token_ids / logprobs</text>
+          <text x="895" y="324" text-anchor="middle" font-size="12">finish_reason / routed_experts</text>
+
+          <path class="arrow a4" d="M299 298 H392"></path>
+          <path class="arrow a4" d="M642 298 H755"></path>
+          <path class="arrow a4 dash" d="M895 250 V120"></path>
+        </svg>
+      </div>
+
+      <h3>5.1 vLLM server 是怎么启动的</h3>
+      <p><code>ServerGroup.start_engines</code> 创建 <code>VLLMEngine</code> Ray actor；<code>VLLMEngine._init_normal</code> 再用 Python multiprocessing 执行 <code>vllm serve</code>。启动命令由 <code>launch_server_process</code> 组装：</p>
+      <pre><code>vllm serve $hf_checkpoint \
+  --tensor-parallel-size $rollout_num_gpus_per_engine \
+  --port $server_port \
+  --host $host \
+  --seed $seed \
+  --trust-remote-code \
+  --gpu-memory-utilization 0.55 \
+  --weight-transfer-config '{"backend":"ipc" or "nccl"}'</code></pre>
+      <p>Vime 会把 vLLM 原生 <code>AsyncEngineArgs</code> 自动加前缀暴露成 <code>--vllm-*</code>，再在启动 subprocess 时转回 vLLM CLI。比如 <code>--vllm-max-model-len</code> 会最终进入 <code>vllm serve --max-model-len</code>。</p>
+
+      <h3>5.2 推理请求用的不是 OpenAI Chat Completions</h3>
+      <p>默认文本路径走 vLLM 的 token-only 接口：</p>
+      <pre><code>POST http://{router_ip}:{router_port}/inference/v1/generate
+{
+  "model": args.hf_checkpoint,
+  "token_ids": [prompt_token_ids...],
+  "sampling_params": {
+    "max_tokens": args.rollout_max_response_len,
+    "temperature": args.rollout_temperature,
+    "top_p": args.rollout_top_p,
+    "logprobs": 1
+  }
+}</code></pre>
+      <p>这样做的好处是避免生成后再重新 tokenize：vLLM 返回 <code>choice.token_ids</code> 和 <code>logprobs.content</code>，Vime 直接把新 token append 到 <code>sample.tokens</code>，同时记录 rollout-time logprob。</p>
+
+      <h3>5.3 多模态请求</h3>
+      <p>如果 <code>sample.multimodal_inputs["images"]</code> 存在，Vime 先调用 <code>/v1/chat/completions/render</code> 做多模态预处理，拿到 token/features，再转成 <code>/inference/v1/generate</code> 的 body。这对应 <code>vllm_rollout.py::_mm_render_response_to_generate_body</code>。</p>
+    </section>
+
+    <section id="weight-sync">
+      <h2>6. 训练权重如何同步给 vLLM</h2>
+      <p>每轮 actor 训练完，<code>train.py</code> 调 <code>actor_model.update_weights()</code>。真正执行的是每个 Megatron rank 上的 <code>MegatronTrainRayActor.update_weights</code>。</p>
+      <div class="diagram">
+        <svg width="1160" height="390" viewBox="0 0 1160 390" role="img" aria-label="weight sync flow">
+          <defs>
+            <marker id="arrow5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <style>.a5{marker-end:url(#arrow5)}</style>
+
+          <rect class="box box-orange" x="54" y="55" width="240" height="92"></rect>
+          <text x="174" y="84" text-anchor="middle" font-size="14">Megatron actor params</text>
+          <text x="174" y="108" text-anchor="middle" font-size="12">TP/PP/EP sharded tensors</text>
+          <text x="174" y="128" text-anchor="middle" font-size="12">weights_backuper stores actor</text>
+
+          <rect class="box box-violet" x="362" y="55" width="250" height="92"></rect>
+          <text x="487" y="84" text-anchor="middle" font-size="14">HF weight iterator</text>
+          <text x="487" y="108" text-anchor="middle" font-size="12">global name conversion</text>
+          <text x="487" y="128" text-anchor="middle" font-size="12">gather / bucket / expert handling</text>
+
+          <rect class="box box-red" x="680" y="38" width="215" height="76"></rect>
+          <text x="787" y="68" text-anchor="middle" font-size="14">colocate: CUDA IPC</text>
+          <text x="787" y="92" text-anchor="middle" font-size="12">update_weights_from_tensor</text>
+
+          <rect class="box box-blue" x="680" y="150" width="215" height="76"></rect>
+          <text x="787" y="180" text-anchor="middle" font-size="14">separate: NCCL</text>
+          <text x="787" y="204" text-anchor="middle" font-size="12">update_weights_from_distributed</text>
+
+          <rect class="box box-green" x="952" y="88" width="170" height="92"></rect>
+          <text x="1037" y="118" text-anchor="middle" font-size="14">vLLM server</text>
+          <text x="1037" y="142" text-anchor="middle" font-size="12">/start_weight_update</text>
+          <text x="1037" y="162" text-anchor="middle" font-size="12">/update_weights</text>
+
+          <path class="arrow a5" d="M294 101 H362"></path>
+          <path class="arrow a5" d="M612 101 C645 101 645 76 680 76"></path>
+          <path class="arrow a5" d="M612 101 C645 101 645 188 680 188"></path>
+          <path class="arrow a5" d="M895 76 C932 76 932 124 952 124"></path>
+          <path class="arrow a5" d="M895 188 C932 188 932 154 952 154"></path>
+
+          <rect class="box box-cyan" x="280" y="290" width="610" height="58"></rect>
+          <text x="585" y="314" text-anchor="middle" font-size="14">sleep / wake / pause / resume</text>
+          <text x="585" y="336" text-anchor="middle" font-size="12">colocate 或 offload 模式下，训练和 rollout 通过释放 weights / KV cache 交替占用显存</text>
+        </svg>
+      </div>
+      <table>
+        <tr><th>模式</th><th>代码</th><th>大致流程</th></tr>
+        <tr><td>训推分离</td><td><code>update_weight_from_distributed.py</code></td><td>Megatron PP 源 rank 组织 NCCL group，必要时 all-gather TP 参数，转换到 HF 名称，调用 vLLM <code>/init_weight_transfer_engine</code>、<code>/start_weight_update</code>、<code>/update_weights</code>、<code>/finish_weight_update</code>。</td></tr>
+        <tr><td>训推同卡 colocate</td><td><code>update_weight_from_tensor.py</code></td><td>先让 vLLM <code>/sleep?level=0</code> 释放 weights/KV，再通过 CUDA IPC 把同 GPU slot 的 tensor handle 传给 vLLM worker extension。</td></tr>
+        <tr><td>外部 vLLM</td><td><code>--rollout-external</code></td><td>Vime 不启动 server，只连接用户给的地址，但仍会做健康检查和权重同步相关控制。</td></tr>
+      </table>
+    </section>
+
+    <section id="megatron">
+      <h2>7. Megatron 简明科普</h2>
+      <p>如果只熟悉 PyTorch / HF Trainer，可以先把 Megatron 理解成“大模型训练专用运行时”。它主要解决一个问题：单卡放不下、算不快时，如何把模型、序列、batch、专家切到很多 GPU 上，并且让 forward/backward/optimizer 仍然正确。</p>
+      <div class="grid">
+        <div>
+          <h3>7.1 常见并行名词</h3>
+          <table>
+            <tr><th>缩写</th><th>含义</th><th>直觉</th></tr>
+            <tr><td>DP</td><td>Data Parallel</td><td>每组 GPU 拿不同样本，梯度 all-reduce。</td></tr>
+            <tr><td>TP</td><td>Tensor Parallel</td><td>把一层里的大矩阵切到多张卡。</td></tr>
+            <tr><td>PP</td><td>Pipeline Parallel</td><td>把不同 transformer layers 放到不同卡，像流水线一样跑。</td></tr>
+            <tr><td>CP</td><td>Context Parallel</td><td>把长序列维度切开，常和 ring attention 相关。</td></tr>
+            <tr><td>EP</td><td>Expert Parallel</td><td>MoE expert 分布到不同卡，token 按路由去对应 expert。</td></tr>
+            <tr><td>SP</td><td>Sequence Parallel</td><td>TP 的配套优化，进一步切部分 sequence 激活。</td></tr>
+          </table>
+        </div>
+        <div>
+          <h3>7.2 Vime 里 Megatron 做什么</h3>
+          <ul>
+            <li>初始化 actor / critic / ref / teacher 模型。</li>
+            <li>加载和保存 Megatron checkpoint，必要时导出 HF checkpoint。</li>
+            <li>把 rollout 样本 packing 成 Megatron forward 需要的 batch。</li>
+            <li>计算当前 actor logprob、ref logprob、critic values。</li>
+            <li>计算 GRPO / GSPO / PPO / REINFORCE++ advantage 和 returns。</li>
+            <li>执行 policy loss / value loss / SFT loss 的 forward-backward 和 optimizer step。</li>
+            <li>把训练后的 actor 权重转成 vLLM 能接收的 HF 命名并同步过去。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>7.3 一条样本在 Megatron 训练时怎么变</h3>
+      <pre><code># rollout 后一条样本
+tokens = [prompt_token_ids..., response_token_ids...]   # 长度 total_length
+response_length = R
+loss_mask = [1, 1, ..., 1]                              # 长度 R
+reward = 1.0
+
+# get_batch 对齐到 token-level loss
+full_loss_mask = [0] * (prompt_length - 1) + loss_mask + [0]
+
+# actor forward 得到 logits [1, T_padded, vocab]
+# get_log_probs_and_entropy 从 logits 里只切 response 对应位置：
+log_probs = log p_actor(response_t | prompt, response_&lt;t)
+
+# ref / rollout logprobs 和 reward 进入 advantage：
+advantages, returns = compute_advantages_and_returns(...)
+
+# policy_loss_function 计算 PPO-style clipped loss：
+ppo_kl = old_log_probs - new_log_probs
+pg_loss = clipped_policy_gradient(ppo_kl, advantages)</code></pre>
+      <p>这里容易混淆的是：<code>rollout_log_probs</code> 是 vLLM 生成时记录的旧策略概率；<code>log_probs</code> 是 Megatron 当前 actor 对同一批 response 重算出来的概率。off-policy correction、mismatch metrics、TIS 都围绕两者的差异展开。</p>
+    </section>
+
+    <section id="features">
+      <h2>8. Vime / slime 特性清单</h2>
+      <table>
+        <tr><th>特性</th><th>入口参数 / 代码</th><th>说明</th></tr>
+        <tr><td>vLLM rollout 后端</td><td><code>slime/backends/vllm_utils</code>、<code>slime/rollout/vllm_rollout.py</code></td><td>默认 rollout function 已改为 vLLM；vLLM 原生参数通过 <code>--vllm-*</code> 透传。</td></tr>
+        <tr><td>vllm-router</td><td><code>--router-*</code>、<code>_start_router</code></td><td>Vime 启动 router，vLLM workers 注册到 router，生成请求统一打到 router。</td></tr>
+        <tr><td>训推分离 / 训推同卡</td><td><code>--colocate</code>、<code>--offload-train</code>、<code>--offload-rollout</code></td><td>分离模式用 NCCL 同步权重；同卡模式配合 sleep/wake 和 CUDA IPC 节省显存。</td></tr>
+        <tr><td>动态采样过滤</td><td><code>--dynamic-sampling-filter-path</code></td><td>类似 DAPO，可丢弃全对/全错等没有训练价值的 group，继续 oversampling。</td></tr>
+        <tr><td>partial rollout</td><td><code>--partial-rollout</code>、<code>--mask-offpolicy-in-partial-rollout</code></td><td>长回答未完成时可 abort 并回收到 buffer；续写时可 mask 掉旧 token，只训练本轮 on-policy token。</td></tr>
+        <tr><td>rollout buffer</td><td><code>RolloutDataSourceWithBuffer</code>、<code>slime_plugins/rollout_buffer</code></td><td>DataSource 可从 prompt dataset 和 buffer 混合取样。</td></tr>
+        <tr><td>多算法</td><td><code>--advantage-estimator</code></td><td>支持 <code>grpo</code>、<code>gspo</code>、<code>ppo</code>、<code>reinforce_plus_plus</code>、<code>reinforce_plus_plus_baseline</code>。</td></tr>
+        <tr><td>OPD 蒸馏</td><td><code>--use-opd</code>、<code>teacher_log_probs</code></td><td>可用 teacher logprob 对 advantage 加 reverse KL 惩罚。</td></tr>
+        <tr><td>MoE routing replay</td><td><code>--use-rollout-routing-replay</code></td><td>vLLM 返回 routed experts，Megatron 训练时复用路由，降低 train/infer mismatch。</td></tr>
+        <tr><td>动态 batch size</td><td><code>--use-dynamic-batch-size</code>、<code>--max-tokens-per-gpu</code></td><td>根据样本 token 长度决定 micro-batch 数，并做长度均衡 packing。</td></tr>
+        <tr><td>容错</td><td><code>--use-fault-tolerance</code></td><td>健康监控发现 rollout engine 挂掉后重启，并在下次 weight sync 补权重。</td></tr>
+      </table>
+      <div class="note warn">
+        注意：当前 Vime 仍在开发中，很多接口名沿用 slime / sglang，例如 <code>SglangConfig</code>、<code>sglang_model_routers</code>、<code>--sglang-config</code>。阅读时应看实际实现：默认 engine 已经是 <code>VLLMEngine</code>，默认 rollout function 已经是 <code>slime.rollout.vllm_rollout.generate_rollout</code>。
+      </div>
+    </section>
+
+    <section id="extension">
+      <h2>9. 二次开发入口</h2>
+      <table>
+        <tr><th>想改什么</th><th>优先入口</th><th>函数签名 / 注意点</th></tr>
+        <tr><td>自定义 rollout 流程</td><td><code>--rollout-function-path</code></td><td><code>generate_rollout(args, rollout_id, data_source, evaluation=False)</code>，需要返回含 <code>Sample</code> 的 <code>RolloutFnTrainOutput</code>。</td></tr>
+        <tr><td>只替换单条 sample 的生成逻辑</td><td><code>--custom-generate-function-path</code></td><td>在默认 vLLM rollout 框架内替换 <code>generate(args, sample, sampling_params)</code>，适合 tool use、多轮交互。</td></tr>
+        <tr><td>自定义 reward</td><td><code>--custom-rm-path</code> 或 RM hub</td><td><code>vllm_rollout.generate_and_rm</code> 会在生成后调用 reward。</td></tr>
+        <tr><td>自定义 reward 后处理</td><td><code>--custom-reward-post-process-path</code></td><td>在 <code>_convert_samples_to_train_data</code> 前处理 reward，例如 group normalization 外的特殊规则。</td></tr>
+        <tr><td>自定义 Sample -&gt; train_data</td><td><code>--custom-convert-samples-to-train-data-path</code></td><td>完全接管默认转换逻辑，适合新 loss 或额外训练字段。</td></tr>
+        <tr><td>自定义 Megatron loss</td><td><code>--custom-loss-function-path</code></td><td><code>loss_function</code> 中按 <code>args.loss_type</code> 分发。</td></tr>
+        <tr><td>自定义模型结构</td><td><code>--custom-model-provider-path</code></td><td>返回 Megatron <code>GPTModel</code>，签名见 <code>arguments.py</code> 注释。</td></tr>
+      </table>
+    </section>
+
+    <section id="checklist">
+      <h2>10. 代码核对清单</h2>
+      <table>
+        <tr><th>问题</th><th>看哪里</th><th>结论</th></tr>
+        <tr><td>Vime 的默认 rollout 后端是不是 vLLM？</td><td><code>slime/utils/arguments.py</code> 的 <code>--rollout-function-path</code></td><td>默认是 <code>slime.rollout.vllm_rollout.generate_rollout</code>。</td></tr>
+        <tr><td>vLLM server 是外部服务还是 Vime 自己拉起？</td><td><code>VLLMEngine._init_normal</code></td><td>默认由 Vime spawn <code>vllm serve</code>；<code>--rollout-external</code> 时连接外部地址。</td></tr>
+        <tr><td>请求发到哪个接口？</td><td><code>vllm_rollout.generate</code></td><td>文本默认 <code>/inference/v1/generate</code>；多模态先 <code>/v1/chat/completions/render</code>。</td></tr>
+        <tr><td>训练数据在哪里从 Sample 变成 dict？</td><td><code>RolloutManager._convert_samples_to_train_data</code></td><td>产出 <code>tokens/response_lengths/rewards/loss_masks/rollout_log_probs</code> 等字段。</td></tr>
+        <tr><td>dict 如何分给 Megatron DP rank？</td><td><code>RolloutManager._split_train_data_by_dp</code></td><td>按 DP 数切 partition，可按 sequence length balance。</td></tr>
+        <tr><td>Megatron 哪里把 list token pack 成 batch？</td><td><code>megatron_utils/data.py::get_batch</code></td><td><code>thd</code> 模式拼成 <code>[1, T_padded]</code> 并构造 <code>PackedSeqParams</code>。</td></tr>
+        <tr><td>GRPO/PPO advantage 在哪里算？</td><td><code>megatron_utils/loss.py::compute_advantages_and_returns</code></td><td>按 <code>args.advantage_estimator</code> 分支。</td></tr>
+        <tr><td>权重同步给 vLLM 在哪里？</td><td><code>MegatronTrainRayActor.update_weights</code></td><td>colocate 走 <code>UpdateWeightFromTensor</code>，分离走 <code>UpdateWeightFromDistributed</code>。</td></tr>
+      </table>
+
+      <h3>参考文件</h3>
+      <ul>
+        <li><code>vime/train.py</code></li>
+        <li><code>vime/README_zh.md</code>、<code>vime/docs/zh/get_started/usage.md</code></li>
+        <li><code>vime/slime/ray/placement_group.py</code>、<code>vime/slime/ray/rollout.py</code>、<code>vime/slime/ray/actor_group.py</code></li>
+        <li><code>vime/slime/rollout/vllm_rollout.py</code>、<code>vime/slime/rollout/data_source.py</code></li>
+        <li><code>vime/slime/backends/vllm_utils/vllm_engine.py</code>、<code>vime/slime/backends/vllm_utils/arguments.py</code></li>
+        <li><code>vime/slime/backends/megatron_utils/actor.py</code>、<code>data.py</code>、<code>loss.py</code>、<code>model.py</code></li>
+        <li><code>vime/slime/backends/megatron_utils/update_weight/update_weight_from_distributed.py</code>、<code>update_weight_from_tensor.py</code></li>
+      </ul>
+    </section>
+  </main>
+  <script src="./nav.js" defer></script>
+</body>
+</html>
