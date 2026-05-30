@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vLLM Sampler 过程导读</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #18212f;
+      --muted: #5f6f84;
+      --line: #d7dee8;
+      --code-bg: #101722;
+      --code-ink: #dce9ff;
+      --blue: #1769aa;
+      --green: #18815d;
+      --orange: #b56716;
+      --red: #b33b3b;
+      --violet: #6554c0;
+      --cyan: #087990;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.68 -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      background: #111827;
+      color: #f8fafc;
+      padding: 34px 40px 28px;
+    }
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+    header p {
+      max-width: 1120px;
+      margin: 6px 0;
+      color: #cbd5e1;
+    }
+    main {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 28px 24px 64px;
+    }
+    section {
+      margin: 0 0 20px;
+      padding: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      color: #0f2f54;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+      color: #164b7a;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      background: #eef2f7;
+      color: #a12a2a;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow-x: auto;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-size: 13px;
+      line-height: 1.52;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+      font-size: inherit;
+    }
+    table {
+      width: 100%;
+      margin: 12px 0;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #f0f4f9; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+    .toc {
+      columns: 2;
+      padding-left: 22px;
+    }
+    .small {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .note {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: #eef6ff;
+      color: #15324f;
+    }
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7ea;
+      color: #52320f;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfcfe;
+    }
+    .card h3 { margin-top: 0; }
+    .diagram {
+      width: 100%;
+      margin: 12px 0;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+    svg {
+      display: block;
+      min-width: 1040px;
+    }
+    .box { fill: #fff; stroke: #98a8bb; stroke-width: 1.2; rx: 8; }
+    .box-blue { fill: #edf6ff; stroke: var(--blue); }
+    .box-green { fill: #ecf8f3; stroke: var(--green); }
+    .box-orange { fill: #fff4e5; stroke: var(--orange); }
+    .box-violet { fill: #f2efff; stroke: var(--violet); }
+    .box-cyan { fill: #e9f8fb; stroke: var(--cyan); }
+    .arrow {
+      stroke: #415166;
+      stroke-width: 1.6;
+      fill: none;
+      marker-end: url(#arrow);
+    }
+    .lane {
+      fill: #f8fafc;
+      stroke: #d8e1ed;
+      stroke-width: 1;
+      rx: 8;
+    }
+    .tag {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #526273;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .formula {
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f8fafc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+    @media (max-width: 860px) {
+      header { padding: 24px 18px; }
+      main { padding: 18px 12px 44px; }
+      section { padding: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .toc { columns: 1; }
+    }
+  </style>
+  <link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+  <nav class="study-topnav" aria-label="Study note navigation">
+    <a class="study-topnav__brand" href="./">vLLM Study</a>
+    <div class="study-topnav__links">
+      <a class="study-topnav__link" href="./">DeepSeek V3 FusedMoE</a>
+      <a class="study-topnav__link" href="./qwen3_model_runner.html">Qwen3 Runner</a>
+      <a class="study-topnav__link" href="./qwen3_structure.html">Qwen3 Structure</a>
+      <a class="study-topnav__link" href="./vllm_cp_pcp_dcp.html">CP / PCP / DCP</a>
+      <a class="study-topnav__link" href="./vllm_prefix_cache.html">Prefix Cache</a>
+      <a class="study-topnav__link" href="./vllm_sampler.html" aria-current="page">Sampler</a>
+      <a class="study-topnav__link" href="./vllm_vit_dp.html">ViT DP</a>
+      <a class="study-topnav__link" href="./vime_framework.html">Vime</a>
+    </div>
+  </nav>
+
+  <header>
+    <h1>vLLM Sampler 过程导读</h1>
+    <p>本文按当前仓库代码梳理 vLLM v1 的采样路径：从请求的 <code>SamplingParams</code> 进入 GPU runner，到 logits 被约束、惩罚、temperature/top-k/top-p/min-p 处理，再到 Gumbel-max 选出 token 并回传给调度器。</p>
+    <p class="small">主线代码：<code>vllm/vllm/v1/worker/gpu/model_runner.py</code>、<code>vllm/vllm/v1/worker/gpu/sample/</code>。兼容路径：<code>vllm/vllm/v1/sample/sampler.py</code>。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>目录</h2>
+      <ol class="toc">
+        <li><a href="#two-paths">两套 Sampler 路径</a></li>
+        <li><a href="#full-flow">端到端主流程</a></li>
+        <li><a href="#state">SamplingParams 如何变成 GPU 状态</a></li>
+        <li><a href="#logits">从 hidden states 到 logits</a></li>
+        <li><a href="#processors">logits 处理顺序</a></li>
+        <li><a href="#gumbel">Gumbel-max 采样</a></li>
+        <li><a href="#logprobs">logprobs 回收</a></li>
+        <li><a href="#spec">投机解码分支</a></li>
+        <li><a href="#legacy">兼容 Sampler 路径</a></li>
+        <li><a href="#checklist">调试核对清单</a></li>
+      </ol>
+    </section>
+
+    <section id="two-paths">
+      <h2>1. 两套 Sampler 路径</h2>
+      <p>当前仓库里能看到两套 v1 sampler。理解时先分清楚入口，否则很容易把两个实现的顺序混在一起。</p>
+      <table>
+        <tr><th>路径</th><th>入口</th><th>特点</th><th>适合怎么看</th></tr>
+        <tr>
+          <td><code>vllm/v1/worker/gpu/sample/Sampler</code></td>
+          <td><code>worker/gpu/model_runner.py</code></td>
+          <td>stateful：请求参数常驻 <code>RequestState</code> / <code>UvaBackedTensor</code> / <code>StagedWriteTensor</code>；采样使用 Triton Gumbel-max；按 <code>InputBatch</code> 的 req-state 映射处理。</td>
+          <td><strong>主线</strong>。本文 2-8 节按这条讲。</td>
+        </tr>
+        <tr>
+          <td><code>vllm/v1/sample/Sampler</code></td>
+          <td><code>gpu_model_runner.py</code>、部分 warmup / rejection sampler 场景</td>
+          <td>stateless-ish：每步传入 <code>SamplingMetadata</code>；随机采样由 <code>TopKTopPSampler</code> 选择 FlashInfer、Triton、CPU/XPU/native 路径。</td>
+          <td>第 9 节单独对照。</td>
+        </tr>
+      </table>
+      <div class="note">一句话：新 GPU worker 把 per-request sampling state 长期放在 GPU/UVA 侧，采样时只拿本 step 的 <code>idx_mapping</code> 做索引；兼容路径每步围绕 <code>SamplingMetadata</code> 组织采样。</div>
+    </section>
+
+    <section id="full-flow">
+      <h2>2. 端到端主流程</h2>
+      <div class="diagram">
+        <svg width="1120" height="430" viewBox="0 0 1120 430" role="img" aria-label="vLLM sampler flow">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#415166"></path>
+            </marker>
+          </defs>
+          <rect class="lane" x="24" y="22" width="1072" height="88"></rect>
+          <text x="42" y="50" font-size="14" fill="#526273">请求进入 / 状态注册</text>
+          <rect class="box box-blue" x="42" y="66" width="165" height="30"></rect>
+          <text x="54" y="86" font-size="13">NewRequestData</text>
+          <rect class="box box-blue" x="260" y="66" width="190" height="30"></rect>
+          <text x="272" y="86" font-size="13">sampler.add_request()</text>
+          <rect class="box box-green" x="505" y="66" width="246" height="30"></rect>
+          <text x="517" y="86" font-size="13">SamplingStates / PenaltiesState</text>
+          <rect class="box box-green" x="806" y="66" width="226" height="30"></rect>
+          <text x="818" y="86" font-size="13">apply_staged_writes()</text>
+          <path class="arrow" d="M207 81 H258"></path>
+          <path class="arrow" d="M450 81 H503"></path>
+          <path class="arrow" d="M751 81 H804"></path>
+
+          <rect class="lane" x="24" y="130" width="1072" height="112"></rect>
+          <text x="42" y="158" font-size="14" fill="#526273">每个 scheduler step 的模型执行</text>
+          <rect class="box box-violet" x="42" y="176" width="150" height="34"></rect>
+          <text x="54" y="197" font-size="13">InputBatch</text>
+          <rect class="box box-violet" x="240" y="176" width="158" height="34"></rect>
+          <text x="252" y="197" font-size="13">model forward</text>
+          <rect class="box box-orange" x="448" y="176" width="196" height="34"></rect>
+          <text x="460" y="197" font-size="13">hidden[logits_indices]</text>
+          <rect class="box box-orange" x="694" y="176" width="172" height="34"></rect>
+          <text x="706" y="197" font-size="13">compute_logits()</text>
+          <rect class="box box-cyan" x="916" y="176" width="150" height="34"></rect>
+          <text x="928" y="197" font-size="13">grammar mask</text>
+          <path class="arrow" d="M192 193 H238"></path>
+          <path class="arrow" d="M398 193 H446"></path>
+          <path class="arrow" d="M644 193 H692"></path>
+          <path class="arrow" d="M866 193 H914"></path>
+
+          <rect class="lane" x="24" y="262" width="1072" height="132"></rect>
+          <text x="42" y="290" font-size="14" fill="#526273">Sampler.__call__</text>
+          <rect class="box box-blue" x="42" y="310" width="144" height="38"></rect>
+          <text x="54" y="333" font-size="13">copy fp32 logits</text>
+          <rect class="box box-green" x="226" y="310" width="205" height="38"></rect>
+          <text x="238" y="333" font-size="13">bias / penalties / bad words</text>
+          <rect class="box box-orange" x="470" y="310" width="164" height="38"></rect>
+          <text x="482" y="333" font-size="13">temp / min_p / top-k-p</text>
+          <rect class="box box-violet" x="674" y="310" width="150" height="38"></rect>
+          <text x="686" y="333" font-size="13">gumbel_sample</text>
+          <rect class="box box-cyan" x="864" y="310" width="184" height="38"></rect>
+          <text x="876" y="333" font-size="13">SamplerOutput + async copy</text>
+          <path class="arrow" d="M186 329 H224"></path>
+          <path class="arrow" d="M431 329 H468"></path>
+          <path class="arrow" d="M634 329 H672"></path>
+          <path class="arrow" d="M824 329 H862"></path>
+          <path class="arrow" d="M992 210 C1016 238 1016 282 992 308"></path>
+        </svg>
+      </div>
+      <p>主流程在 <code>worker/gpu/model_runner.py</code> 里非常直接：最后一个 PP rank 取要产出 logits 的 hidden states，调用模型的 <code>compute_logits()</code>，应用结构化输出 grammar bitmask，然后进入 sampler。如果这一批包含 draft tokens，则走 rejection sampler。</p>
+      <pre><code>sample_hidden_states = hidden_states[input_batch.logits_indices]
+logits = self.model.compute_logits(sample_hidden_states)
+if grammar_output is not None:
+    structured_outputs_worker.apply_grammar_bitmask(...)
+
+if input_batch.num_draft_tokens == 0:
+    sampler_output = self.sampler(logits, input_batch)
+else:
+    sampler_output = self.rejection_sampler(logits, input_batch, draft_logits)</code></pre>
+    </section>
+
+    <section id="state">
+      <h2>3. SamplingParams 如何变成 GPU 状态</h2>
+      <p>新请求进入 GPU runner 时，<code>sampler.add_request(req_index, prompt_len, sampling_params)</code> 会把请求参数拆到多个状态对象中。后续每个 step 不再重新构造一份大 metadata，而是通过 <code>idx_mapping</code> 找到每个 batch row 对应的 request state。</p>
+      <div class="grid">
+        <div class="card">
+          <h3>SamplingStates</h3>
+          <p>保存 <code>temperature</code>、<code>top_k</code>、<code>top_p</code>、<code>min_p</code>、<code>seed</code>、<code>num_logprobs</code>。其中 <code>top_k&lt;=0</code> 或超过 vocab 时会被归一化为 <code>vocab_size</code>，表示不启用 top-k。</p>
+          <span class="tag">UvaBackedTensor</span><span class="tag">per request</span>
+        </div>
+        <div class="card">
+          <h3>LogitBiasState</h3>
+          <p>保存 <code>allowed_token_ids</code>、<code>logit_bias</code>、<code>min_tokens</code> 对应的 stop token mask。它们属于“会影响 greedy 结果”的处理。</p>
+          <span class="tag">allowed ids</span><span class="tag">stop token</span>
+        </div>
+        <div class="card">
+          <h3>PenaltiesState</h3>
+          <p>保存 repetition / frequency / presence penalty，并维护 prompt token bitset 和 output token 计数。这样采样时 kernel 可以直接知道某 token 是否在 prompt/output 中出现过。</p>
+          <span class="tag">prompt_bin_mask</span><span class="tag">output_bin_counts</span>
+        </div>
+        <div class="card">
+          <h3>BadWordsState / LogprobTokenIdsState</h3>
+          <p>bad words 被扁平化成 token 数组和 offsets；指定 token 的 logprob 请求也被单独缓存，避免每步临时整理复杂 Python 结构。</p>
+          <span class="tag">staged write</span><span class="tag">GPU gather</span>
+        </div>
+      </div>
+      <div class="note">关键点：<code>apply_staged_writes()</code> 把 CPU 侧 staged 参数同步到 GPU/UVA 侧。之后采样阶段只处理当前 batch 中被 <code>idx_mapping_np</code> 选中的 request。</div>
+    </section>
+
+    <section id="logits">
+      <h2>4. 从 hidden states 到 logits</h2>
+      <p><code>InputBatch</code> 里和 sampler 相关的字段主要有：</p>
+      <table>
+        <tr><th>字段</th><th>shape / 含义</th><th>采样中怎么用</th></tr>
+        <tr><td><code>logits_indices</code></td><td>本 step 需要算 logits 的 token 位置</td><td><code>hidden_states[input_batch.logits_indices]</code> 只取最后要预测的位置；prefill 可能不是每个输入 token 都产出采样 token。</td></tr>
+        <tr><td><code>idx_mapping</code> / <code>idx_mapping_np</code></td><td>batch row 到 request state index</td><td>从 state tensors 中取对应请求的 temperature、top-k、penalty 等。</td></tr>
+        <tr><td><code>expanded_idx_mapping</code></td><td>spec decoding 时可能比 request 数更长</td><td>多个 draft/logit row 映射回同一个 request state。</td></tr>
+        <tr><td><code>positions</code></td><td>每个 token 在 request 内的位置</td><td>Gumbel seed 用 <code>seed + pos</code> 派生随机性；min_tokens 也依赖 position。</td></tr>
+        <tr><td><code>expanded_local_pos</code></td><td>当前 logit row 在该 request 的本 step 内局部位置</td><td>penalty 和 bad words 在 spec token 场景下需要看同 step 内前面的 draft token。</td></tr>
+      </table>
+      <p>所以 sampler 看到的 <code>logits</code> 通常是 <code>[num_logits, vocab_size]</code>，不是完整 <code>[num_input_tokens, vocab_size]</code>。decode 常见是一请求一行；prefill、chunked prefill、spec decode 会让行数和请求数不完全一致。</p>
+    </section>
+
+    <section id="processors">
+      <h2>5. logits 处理顺序</h2>
+      <p>主线 sampler 的 <code>apply_sampling_params()</code> 顺序如下。多数操作是 in-place kernel，目标是尽量少分配、少 CPU/GPU 同步。</p>
+      <div class="diagram">
+        <svg width="1100" height="310" viewBox="0 0 1100 310" role="img" aria-label="logits processors order">
+          <defs>
+            <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#415166"></path>
+            </marker>
+          </defs>
+          <rect class="box box-blue" x="32" y="50" width="142" height="50"></rect>
+          <text x="48" y="72" font-size="13">1. fp32 copy</text>
+          <text x="48" y="90" font-size="12" fill="#526273">empty_like + copy</text>
+
+          <rect class="box box-green" x="218" y="50" width="172" height="50"></rect>
+          <text x="234" y="72" font-size="13">2. logit bias</text>
+          <text x="234" y="90" font-size="12" fill="#526273">allowed / bias / min_tokens</text>
+
+          <rect class="box box-orange" x="434" y="50" width="160" height="50"></rect>
+          <text x="450" y="72" font-size="13">3. penalties</text>
+          <text x="450" y="90" font-size="12" fill="#526273">rep / freq / presence</text>
+
+          <rect class="box box-cyan" x="638" y="50" width="150" height="50"></rect>
+          <text x="654" y="72" font-size="13">4. bad words</text>
+          <text x="654" y="90" font-size="12" fill="#526273">prefix match -> -inf</text>
+
+          <rect class="box box-violet" x="832" y="50" width="156" height="50"></rect>
+          <text x="848" y="72" font-size="13">5. temperature</text>
+          <text x="848" y="90" font-size="12" fill="#526273">logits / temp</text>
+
+          <path class="arrow" d="M174 75 H216"></path>
+          <path class="arrow" d="M390 75 H432"></path>
+          <path class="arrow" d="M594 75 H636"></path>
+          <path class="arrow" d="M788 75 H830"></path>
+
+          <rect class="box box-green" x="238" y="172" width="150" height="50"></rect>
+          <text x="254" y="194" font-size="13">6. min_p</text>
+          <text x="254" y="212" font-size="12" fill="#526273">max + log(min_p)</text>
+          <rect class="box box-orange" x="448" y="172" width="168" height="50"></rect>
+          <text x="464" y="194" font-size="13">7. top_k / top_p</text>
+          <text x="464" y="212" font-size="12" fill="#526273">mask to -inf</text>
+          <rect class="box box-violet" x="676" y="172" width="160" height="50"></rect>
+          <text x="692" y="194" font-size="13">8. gumbel argmax</text>
+          <text x="692" y="212" font-size="12" fill="#526273">sampled token id</text>
+
+          <path class="arrow" d="M910 100 C910 148 388 134 314 170"></path>
+          <path class="arrow" d="M388 197 H446"></path>
+          <path class="arrow" d="M616 197 H674"></path>
+        </svg>
+      </div>
+
+      <h3>5.1 logit bias 阶段</h3>
+      <p><code>LogitBiasState.apply_logit_bias()</code> 的 Triton kernel 同时处理三类约束：</p>
+      <ul>
+        <li><code>allowed_token_ids</code>：先把整行 logits 置为 <code>-inf</code>，再恢复白名单 token 的原 logits。</li>
+        <li><code>logit_bias</code>：对指定 token 加 bias。</li>
+        <li><code>min_tokens</code>：当前位置未达到最小生成长度时，把 stop token logits 置为 <code>-inf</code>。</li>
+      </ul>
+
+      <h3>5.2 penalties 阶段</h3>
+      <p><code>PenaltiesState</code> 预先把 prompt 中出现过的 token 做成 bit mask，把已经输出过的 token 做成 counts。采样时 kernel 对每个 vocab block 做：</p>
+      <div class="formula">if token appeared in prompt or output:
+    repetition penalty:
+      logits &gt; 0: logits /= repetition_penalty
+      logits &lt;=0: logits *= repetition_penalty
+
+frequency penalty:
+    logits -= frequency_penalty * output_count[token]
+
+presence penalty:
+    logits -= presence_penalty * (output_count[token] &gt; 0)</div>
+
+      <h3>5.3 bad words、temperature、min-p、top-k/top-p</h3>
+      <p><code>BadWordsState</code> 检查 bad word 的 prefix 是否和已输出 token 及本 step 里的 spec input 匹配，匹配时把 bad word 的最后一个 token 置为 <code>-inf</code>。之后 temperature kernel 对每行按请求温度除法；<code>min_p</code> 以本行最大 logit 为基准，低于 <code>max_logit + log(min_p)</code> 的 token 被屏蔽；top-k/top-p 最后再把候选集合裁小。</p>
+      <div class="note warn">主线 GPU sampler 里 temperature 在 top-k/top-p 之前完成；<code>temperature == 0</code> 会跳过随机噪声，后面的 Gumbel-max 退化成 argmax。</div>
+    </section>
+
+    <section id="gumbel">
+      <h2>6. Gumbel-max 采样</h2>
+      <p>主线 sampler 不调用 <code>torch.multinomial</code>。它用 Gumbel-max trick：对每个 token 的处理后 logit 加一份 Gumbel 噪声，然后取 argmax。</p>
+      <div class="formula">sample = argmax_i(logit_i + g_i)
+g_i = -log(-log(u_i)),  u_i ~ Uniform(0, 1)</div>
+      <p>当 temperature 为 0 时，kernel 不加 Gumbel 噪声，直接在处理后的 logits 上取最大值，也就是 greedy。随机种子来自请求的 <code>seed</code>，再结合当前位置 <code>pos</code> 派生，因此同一请求不同 token 位置不会复用同一随机序列。</p>
+      <table>
+        <tr><th>步骤</th><th>实现</th><th>细节</th></tr>
+        <tr><td>分块扫描 vocab</td><td><code>_gumbel_sample_kernel</code></td><td>按 <code>BLOCK_SIZE=1024</code> 对 vocab 分块，每块得到局部最大值和 token id。</td></tr>
+        <tr><td>局部结果归并</td><td><code>local_max.argmax()</code> + <code>local_argmax.gather()</code></td><td>第二阶段在 PyTorch 中从每行所有 block 的局部最大值里选全局最大。</td></tr>
+        <tr><td>fp64 可选</td><td><code>use_fp64_gumbel</code></td><td>默认 fp32；开启后 Gumbel 噪声计算更精细但吞吐更低。</td></tr>
+      </table>
+      <pre><code>processed_logits = self.apply_sampling_params(...)
+sampled = gumbel_sample(
+    processed_logits,
+    expanded_idx_mapping,
+    self.sampling_states.temperature.gpu,
+    self.sampling_states.seeds.gpu,
+    pos,
+    apply_temperature=False,
+)</code></pre>
+    </section>
+
+    <section id="logprobs">
+      <h2>7. logprobs 回收</h2>
+      <p>采样结束后，sampler 会看本 batch 是否有人请求 <code>logprobs</code> 或 <code>logprob_token_ids</code>。如果没有，直接返回 token，避免额外 top-k / log-softmax 成本。</p>
+      <p>有 logprobs 时，主线代码走 <code>compute_topk_logprobs()</code>，输入可以是原始 logits，也可以是处理后的 logits，取决于 <code>logprobs_mode</code>。输出会放进 <code>SamplerOutput.logprobs_tensors</code>，随后在 async output copy 阶段转到 CPU，最终交给 engine output processor。</p>
+      <table>
+        <tr><th>字段</th><th>作用</th></tr>
+        <tr><td><code>sampled_token_ids</code></td><td>GPU tensor，shape 通常是 <code>[num_reqs, 1]</code>；spec decoding 可返回多 token。</td></tr>
+        <tr><td><code>logprobs_tensors</code></td><td>包含 sampled token 以及 top-k / 指定 token 的 logprob 和 rank。</td></tr>
+        <tr><td><code>num_sampled</code></td><td>每个请求这步真正接受/生成了多少 token；chunked prefill 可能是 0。</td></tr>
+        <tr><td><code>num_nans</code></td><td>仅在 <code>VLLM_COMPUTE_NANS_IN_LOGITS</code> 开启时统计。</td></tr>
+      </table>
+    </section>
+
+    <section id="spec">
+      <h2>8. 投机解码分支</h2>
+      <p>当 <code>input_batch.num_draft_tokens != 0</code> 时，<code>model_runner.sample()</code> 不直接调用普通 sampler，而是调用 <code>RejectionSampler</code>。直觉上它要做两件事：</p>
+      <ol>
+        <li>对 target model 的 logits 应用同一套采样约束。</li>
+        <li>根据 draft logits 和 target logits 接受或拒绝 draft token，必要时从 target 分布补采样。</li>
+      </ol>
+      <p>普通 sampler 仍然是它的基础组件，因为 draft 被拒绝后的补 token、logprobs 以及部分 bonus token 预测都需要复用同一套 logits 处理和采样语义。主线里 <code>expanded_idx_mapping</code>、<code>expanded_local_pos</code>、bad words 和 penalties 对 spec token 的处理，都是为了让一个 step 内多 token 采样也保持一致。</p>
+    </section>
+
+    <section id="legacy">
+      <h2>9. 兼容 Sampler 路径对照</h2>
+      <p><code>vllm/v1/sample/sampler.py</code> 的类注释已经把顺序写得很完整。它的核心差异是：每次 <code>forward(logits, SamplingMetadata)</code> 带着本 step 的完整 metadata 进来，<code>sample()</code> 中先尝试 greedy，再按 temperature / min-p / top-k/top-p 做随机采样。</p>
+      <div class="grid">
+        <div class="card">
+          <h3>forward 顺序</h3>
+          <ol>
+            <li>必要时先用原始 logits 计算 raw logprobs。</li>
+            <li>logits 转 fp32。</li>
+            <li>allowed token、bad words、非 argmax-invariant logits processor。</li>
+            <li>repetition / frequency / presence penalties。</li>
+            <li><code>sample()</code> 执行 greedy 或 random。</li>
+            <li>按需 gather top logprobs / 指定 token logprobs。</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>TopKTopPSampler</h3>
+          <p>它会根据平台和模式选择实现：CUDA 上可用 FlashInfer；CPU 走 CPU/native；XPU 走专用 kernel；ROCm 有 aiter 分支但当前代码里采样 path 仍禁用回退。native 路径会先把 top-k/top-p 外的 logits 置 <code>-inf</code>，再 softmax。</p>
+        </div>
+      </div>
+      <h3>随机采样方式</h3>
+      <p>兼容路径的 native random sample 使用 exponential race，而不是 <code>torch.multinomial</code>：</p>
+      <div class="formula">q_i ~ Exponential(1)
+sample = argmax_i(prob_i / q_i)</div>
+      <p>这和按概率分布采样在统计上等价，并避免了 <code>torch.multinomial</code> 带来的 CPU-GPU 同步。FlashInfer 路径也声明只保证统计等价，不保证和 native 输出逐 token 一致。</p>
+    </section>
+
+    <section id="checklist">
+      <h2>10. 调试核对清单</h2>
+      <table>
+        <tr><th>想确认的问题</th><th>看哪里</th><th>预期</th></tr>
+        <tr><td>本请求的 temperature/top-k/top-p 是否已进入 GPU 状态？</td><td><code>worker/gpu/sample/states.py::SamplingStates.add_request/apply_staged_writes</code></td><td><code>top_k&lt;=0</code> 被改成 <code>vocab_size</code>；seed 为 None 时生成随机 int64。</td></tr>
+        <tr><td>为什么 stop token 没出来？</td><td><code>worker/gpu/sample/logit_bias.py::_bias_kernel</code></td><td>如果 <code>pos &lt; min_len</code>，stop token 被置 <code>-inf</code>。</td></tr>
+        <tr><td>为什么只有白名单 token 能采？</td><td><code>LogitBiasState</code></td><td>allowed ids 会先清空整行 logits，再恢复白名单。</td></tr>
+        <tr><td>频率/存在惩罚是否生效？</td><td><code>worker/gpu/sample/penalties.py</code></td><td>检查 <code>use_penalty</code>、<code>prompt_bin_mask</code>、<code>output_bin_counts</code>。</td></tr>
+        <tr><td>为什么 temperature=0 仍走 gumbel_sample？</td><td><code>worker/gpu/sample/gumbel.py::gumbel_block_argmax</code></td><td><code>temp == 0</code> 时不加 Gumbel 噪声，结果是 greedy argmax。</td></tr>
+        <tr><td>top-p/top-k 小 batch 为什么不是 Triton？</td><td><code>v1/sample/ops/topk_topp_sampler.py::apply_top_k_top_p</code></td><td>非 CPU 且 batch size 大于等于 8 才优先 Triton，否则用 PyTorch sort/topk 路径。</td></tr>
+        <tr><td>spec decoding 为什么 logits 行数多于请求数？</td><td><code>InputBatch.expanded_idx_mapping</code></td><td>多个 draft/bonus token row 会映射到同一个 request state。</td></tr>
+      </table>
+      <h3>参考代码</h3>
+      <ul>
+        <li><code>vllm/vllm/v1/worker/gpu/model_runner.py</code>：新 GPU worker 的 sample 入口。</li>
+        <li><code>vllm/vllm/v1/worker/gpu/sample/sampler.py</code>：主线 sampler 顺序。</li>
+        <li><code>vllm/vllm/v1/worker/gpu/sample/states.py</code>：temperature、top-k/top-p、min-p、seed 状态。</li>
+        <li><code>vllm/vllm/v1/worker/gpu/sample/gumbel.py</code>：Triton Gumbel-max kernel。</li>
+        <li><code>vllm/vllm/v1/sample/sampler.py</code>：兼容路径 sampler。</li>
+        <li><code>vllm/vllm/v1/sample/ops/topk_topp_sampler.py</code>：FlashInfer/native/CPU/XPU top-k/top-p 实现选择。</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="./nav.js" defer></script>
+</body>
+</html>

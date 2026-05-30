@@ -12,3 +12,4 @@ Current page:
 - Qwen3 model structure notes: `site/qwen3_structure.html`
 - vLLM Context Parallel notes: `site/vllm_cp_pcp_dcp.html`
 - vLLM Prefix Cache notes: `site/vllm_prefix_cache.html`
+- vLLM Sampler notes: `site/vllm_sampler.html`
