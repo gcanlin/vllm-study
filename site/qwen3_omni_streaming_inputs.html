@@ -158,11 +158,560 @@
       background: #0f172a;
       color: #dbeafe;
     }
+    .diagram {
+      margin: 14px 0;
+      padding: 14px;
+      overflow-x: auto;
+      border: 1px solid #c8d6ee;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
+    }
+    .mega-diagram {
+      margin: 18px 0;
+      padding: 12px;
+      overflow: auto;
+      border: 1px solid #aebfda;
+      border-radius: 8px;
+      background: #f8fbff;
+      box-shadow: 0 2px 10px rgba(16, 24, 40, 0.06);
+    }
+    .legacy-mega {
+      display: none;
+    }
+    .mega-diagram svg {
+      display: block;
+      width: 100%;
+      min-width: 1180px;
+      min-height: 760px;
+      height: min(92vh, 920px);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .mega-title {
+      font-size: 25px;
+      font-weight: 800;
+      fill: #17202a;
+    }
+    .mega-subtitle {
+      font-size: 13px;
+      fill: #5b6677;
+    }
+    .mega-band-label {
+      font-size: 14px;
+      font-weight: 800;
+      fill: #344054;
+      letter-spacing: 0.02em;
+    }
+    .mega-node-title {
+      font-size: 13px;
+      font-weight: 800;
+      fill: #17202a;
+    }
+    .mega-node-small {
+      font-size: 10.5px;
+      fill: #526071;
+    }
+    .mega-edge {
+      fill: none;
+      stroke: #4f6f95;
+      stroke-width: 2.2;
+    }
+    .mega-edge.audio {
+      stroke: #1c8065;
+    }
+    .mega-edge.video {
+      stroke: #6d58c6;
+    }
+    .mega-edge.text {
+      stroke: #2f6fda;
+    }
+    .mega-edge.warn {
+      stroke: #b86413;
+    }
+    .mega-edge.dashed {
+      stroke-dasharray: 7 6;
+    }
+    .mega-chip {
+      font-size: 10px;
+      font-weight: 800;
+      fill: #ffffff;
+    }
+    .mega-label {
+      font-size: 10.5px;
+      fill: #344054;
+      font-weight: 700;
+    }
+    .diagram-title {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #243b61;
+    }
+    .diagram-grid {
+      display: grid;
+      gap: 10px;
+    }
+    .diagram-grid.cols-2 {
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+    }
+    .diagram-grid.cols-3 {
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+    }
+    .flowline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: stretch;
+      min-width: max-content;
+    }
+    .node,
+    .node-soft,
+    .node-warn,
+    .node-green {
+      min-width: 112px;
+      padding: 8px 10px;
+      border: 1px solid #b8c8df;
+      border-radius: 8px;
+      background: #fff;
+      color: #243044;
+      font-size: 13px;
+      line-height: 1.35;
+      text-align: center;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    .node-soft {
+      background: #eef5ff;
+      border-color: #b8cff0;
+    }
+    .node-green {
+      background: #ecfdf5;
+      border-color: #a8dcc5;
+    }
+    .node-warn {
+      background: #fff7ed;
+      border-color: #f0c48d;
+    }
+    .node small,
+    .node-soft small,
+    .node-warn small,
+    .node-green small {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .arrow {
+      display: inline-flex;
+      align-items: center;
+      color: #54708f;
+      font-weight: 700;
+      min-width: 18px;
+      justify-content: center;
+    }
+    .lane {
+      padding: 10px;
+      border: 1px solid #d8e1ee;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .lane-title {
+      margin: 0 0 8px;
+      color: #41546d;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .timeline,
+    .token-row,
+    .queue-row,
+    .content-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      min-width: max-content;
+    }
+    .segment,
+    .token,
+    .frame,
+    .byte,
+    .matrix-cell,
+    .mask-cell {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 30px;
+      padding: 5px 8px;
+      border: 1px solid #b7c7dc;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #223044;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .segment.audio {
+      min-width: 88px;
+      background: #ecfdf5;
+      border-color: #9bd7bd;
+    }
+    .segment.tail {
+      min-width: 56px;
+      background: #fff7ed;
+      border-color: #f0c48d;
+    }
+    .frame {
+      min-width: 42px;
+      background: #eef2ff;
+      border-color: #b8c2f0;
+    }
+    .frame.selected {
+      background: #dbeafe;
+      border-color: #78a7e8;
+      box-shadow: inset 0 -3px 0 #2f6fda;
+    }
+    .token {
+      min-width: 44px;
+      background: #f8fafc;
+    }
+    .token.mm {
+      background: #fef3c7;
+      border-color: #e8bd54;
+    }
+    .byte {
+      min-width: 34px;
+      background: #f1f5f9;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .matrix {
+      display: inline-grid;
+      gap: 4px;
+      padding: 8px;
+      border: 1px solid #cfd9e8;
+      border-radius: 8px;
+      background: #fff;
+      vertical-align: top;
+    }
+    .matrix.cols-4 { grid-template-columns: repeat(4, 42px); }
+    .matrix.cols-5 { grid-template-columns: repeat(5, 42px); }
+    .matrix.cols-6 { grid-template-columns: repeat(6, 42px); }
+    .matrix-cell {
+      min-width: 36px;
+      min-height: 28px;
+      padding: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #f8fafc;
+    }
+    .matrix-cell.mm {
+      background: #fef3c7;
+      border-color: #e8bd54;
+    }
+    .mask-cell {
+      min-width: 28px;
+      min-height: 26px;
+      padding: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #f8fafc;
+    }
+    .mask-cell.on {
+      background: #dbeafe;
+      border-color: #78a7e8;
+      font-weight: 700;
+    }
+    .caption {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .debug-trace {
+      margin: 14px 0;
+      padding: 14px;
+      overflow-x: auto;
+      border: 1px solid #b9cbe5;
+      border-radius: 8px;
+      background: #f8fbff;
+    }
+    .debug-title {
+      margin: 0 0 12px;
+      color: #243b61;
+      font-size: 15px;
+      font-weight: 800;
+    }
+    .debug-step {
+      display: grid;
+      grid-template-columns: minmax(230px, 0.86fr) minmax(420px, 1.5fr);
+      gap: 12px;
+      align-items: stretch;
+      min-width: 720px;
+      padding: 12px;
+      border: 1px solid #cad7ea;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    .debug-step + .debug-step {
+      margin-top: 0;
+    }
+    .debug-arrow-down {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 24px;
+      min-width: 720px;
+      color: #476482;
+      font-weight: 800;
+    }
+    .debug-meta {
+      padding: 10px;
+      border-radius: 7px;
+      background: #101828;
+      color: #f8fafc;
+    }
+    .debug-meta .class-badge,
+    .debug-meta .method-badge {
+      display: inline-block;
+      margin: 0 5px 6px 0;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .debug-meta .class-badge {
+      background: #dbeafe;
+      color: #17315c;
+    }
+    .debug-meta .method-badge {
+      background: #ecfdf5;
+      color: #164333;
+    }
+    .debug-meta strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .debug-meta small {
+      display: block;
+      margin-top: 5px;
+      color: #bfd0e6;
+      line-height: 1.35;
+    }
+    .debug-vars {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(190px, 1fr));
+      gap: 8px;
+    }
+    .debug-var {
+      padding: 8px 9px;
+      border: 1px solid #d4deeb;
+      border-radius: 7px;
+      background: #f8fafc;
+      color: #233044;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .debug-var.wide {
+      grid-column: 1 / -1;
+    }
+    .debug-var .var-name {
+      display: block;
+      margin-bottom: 3px;
+      color: #1c314f;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-weight: 800;
+    }
+    .shape {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #e0f2fe;
+      color: #164e63;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .shape.audio { background: #dcfce7; color: #14532d; }
+    .shape.video { background: #ede9fe; color: #4c1d95; }
+    .shape.warn { background: #ffedd5; color: #7c2d12; }
+    .debug-branch {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(220px, 1fr));
+      gap: 10px;
+      min-width: 720px;
+      margin: 10px 0;
+    }
+    .debug-lane {
+      padding: 10px;
+      border: 1px solid #cbd8e9;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .debug-lane h4 {
+      margin: 0 0 8px;
+      color: #243b61;
+      font-size: 13px;
+    }
+    .node.mm {
+      background: #fef3c7;
+      border-color: #e8bd54;
+    }
+    .single-debug {
+      background: #0f1115;
+      color: #e6e8ee;
+      border-color: #262a35;
+    }
+    .single-debug h2,
+    .single-debug h3 {
+      color: #7aa2f7;
+    }
+    .single-debug p,
+    .single-debug li {
+      color: #d6d9e2;
+    }
+    .single-debug code {
+      background: #222632;
+      color: #c0caf5;
+    }
+    .case-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .case-card {
+      padding: 14px;
+      border: 1px solid #262a35;
+      border-radius: 8px;
+      background: #161922;
+    }
+    .case-card h3 {
+      margin-top: 0;
+      color: #bb9af7;
+    }
+    .trace-node {
+      display: grid;
+      grid-template-columns: minmax(420px, 1.15fr) minmax(360px, 0.85fr);
+      gap: 16px;
+      align-items: stretch;
+      margin: 16px 0;
+      padding: 16px;
+      border: 1px solid #2c3140;
+      border-radius: 10px;
+      background: #161922;
+    }
+    .trace-node h3 {
+      margin: 0 0 8px;
+      color: #e0af68;
+      font-size: 17px;
+    }
+    .trace-node pre {
+      margin: 10px 0 0;
+      border-color: #262a35;
+      background: #0b0d12;
+    }
+    .trace-arrow {
+      display: flex;
+      justify-content: center;
+      margin: 4px 0;
+      color: #9aa0ad;
+      font-size: 26px;
+      font-weight: 800;
+    }
+    .shape-panel {
+      padding: 12px;
+      border: 1px solid #2c3140;
+      border-radius: 8px;
+      background: #0f1115;
+    }
+    .shape-panel h4 {
+      margin: 0 0 10px;
+      color: #9ece6a;
+      font-size: 14px;
+    }
+    .geom-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+    }
+    .geom-box {
+      min-width: 88px;
+      padding: 8px 10px;
+      border: 1px solid #3a4254;
+      border-radius: 6px;
+      background: #1c2030;
+      color: #e6e8ee;
+      text-align: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .geom-box.audio {
+      border-color: #1c8065;
+      background: #13231d;
+    }
+    .geom-box.video {
+      border-color: #6d58c6;
+      background: #1b1730;
+    }
+    .geom-box.text {
+      border-color: #2f6fda;
+      background: #142033;
+    }
+    .geom-box.warn {
+      border-color: #b86413;
+      background: #2b2014;
+    }
+    .geom-arrow {
+      color: #9aa0ad;
+      font-weight: 800;
+    }
+    .var-table {
+      width: 100%;
+      margin-top: 10px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .var-table th,
+    .var-table td {
+      border: 1px solid #2c3140;
+      padding: 6px 8px;
+    }
+    .var-table th {
+      background: #1c2030;
+      color: #e0af68;
+    }
+    .trace-note {
+      margin-top: 10px;
+      color: #9aa0ad;
+      font-size: 13px;
+    }
     @media (max-width: 860px) {
       header { padding: 24px 18px; }
       main { padding: 18px 12px 44px; }
       section { padding: 16px; }
       .toc { columns: 1; }
+      .diagram-grid.cols-2,
+      .diagram-grid.cols-3 {
+        grid-template-columns: 1fr;
+      }
+      .debug-step,
+      .debug-branch {
+        grid-template-columns: 1fr;
+        min-width: 0;
+      }
+      .debug-vars {
+        grid-template-columns: 1fr;
+      }
+      .debug-arrow-down {
+        min-width: 0;
+      }
+      .case-grid,
+      .trace-node {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -188,6 +737,7 @@
         <li><a href="#text">文本输入与文本流式输出</a></li>
         <li><a href="#video">视频帧流 + 查询文本 + 可选音频</a></li>
         <li><a href="#qwen3-mm">Qwen3-Omni 多模态处理器</a></li>
+        <li><a href="#single-request-debug">单请求 debug walkthrough</a></li>
         <li><a href="#summary">读码结论</a></li>
       </ol>
     </section>
@@ -215,50 +765,916 @@
           <td>帧被转成 <code>image_pil</code> 或 <code>image_url</code> content block；Qwen3-Omni processor 把它当 image/video 视觉 token 处理。</td>
         </tr>
       </table>
-      <pre class="flow"><code>三种输入的几何直观
+      <div class="mega-diagram" aria-label="Qwen3-Omni clean end-to-end streaming dataflow map">
+        <svg viewBox="0 0 1440 920" role="img">
+          <defs>
+            <marker id="clean-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#4f6f95"></path>
+            </marker>
+            <marker id="clean-arrow-audio" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1c8065"></path>
+            </marker>
+            <marker id="clean-arrow-video" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#6d58c6"></path>
+            </marker>
+            <marker id="clean-arrow-text" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#2f6fda"></path>
+            </marker>
+            <marker id="clean-arrow-warn" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#b86413"></path>
+            </marker>
+            <filter id="clean-shadow" x="-10%" y="-20%" width="120%" height="150%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#101828" flood-opacity="0.12"></feDropShadow>
+            </filter>
+          </defs>
 
-  audio realtime:
-    时间轴 waveform
-    [chunk0][chunk1][chunk2][chunk3]... -> queue -> [5s segment] [5s segment] [tail]
+          <rect x="0" y="0" width="1440" height="920" rx="18" fill="#f8fbff"></rect>
+          <text x="34" y="40" class="mega-title">Qwen3-Omni 全链路 debug map</text>
+          <text x="34" y="64" class="mega-subtitle">竖向读三条输入泳道，横向读 engine / model / output；箭头尽量只走空白走廊。</text>
 
-  text:
-    一条 token 序列
-    [system][user text][assistant prefix] -> token ids -> embedding matrix
+          <rect x="34" y="84" width="310" height="454" rx="14" fill="#eefaf5" stroke="#b7dfcc"></rect>
+          <rect x="378" y="84" width="310" height="454" rx="14" fill="#f4efff" stroke="#d5c6f1"></rect>
+          <rect x="722" y="84" width="310" height="454" rx="14" fill="#eef5ff" stroke="#bfd2ed"></rect>
+          <rect x="1066" y="84" width="332" height="454" rx="14" fill="#fff7ed" stroke="#edc48d"></rect>
+          <rect x="34" y="568" width="1364" height="194" rx="14" fill="#effcf6" stroke="#bfe3d1"></rect>
+          <rect x="34" y="792" width="1364" height="92" rx="14" fill="#f3f6fb" stroke="#ccd8e8"></rect>
 
-  video stream:
-    session frame buffer
-    [F0][F1][F2][F3][F4]...[Fn] --query--> sample [F0][F2][F4][Fn] + text + optional audio</code></pre>
-      <pre class="flow"><code>/v1/realtime audio
-  websocket audio append -> audio_queue -> buffer_realtime_audio()
-  -> AsyncGenerator[StreamingInput] -> AsyncOmni add_request / streaming_update
-  -> Qwen3 Thinker -> Talker -> Code2Wav -> response.audio.delta
+          <text x="54" y="112" class="mega-band-label">A. audio realtime input</text>
+          <text x="398" y="112" class="mega-band-label">B. video protocol stream</text>
+          <text x="742" y="112" class="mega-band-label">C. text / chat request</text>
+          <text x="1086" y="112" class="mega-band-label">D. engine boundary</text>
+          <text x="54" y="596" class="mega-band-label">E. Qwen3-Omni model internals</text>
+          <text x="54" y="820" class="mega-band-label">F. server output</text>
 
-/v1/video/chat/stream
-  websocket video.frame/audio.chunk -> session buffers
-  video.query(text) -> sample frames + current audio + text -> ChatCompletionRequest
-  -> engine.generate once per query -> response.text.delta + optional response.audio.delta
+          <g filter="url(#clean-shadow)">
+            <rect x="76" y="134" width="226" height="48" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="94" y="155" class="mega-node-title">/v1/realtime</text>
+            <text x="94" y="172" class="mega-node-small">append / commit, base64 PCM16</text>
 
-/v1/chat/completions
-  messages text/audio_url/video_url -> renderer + OmniInputPreprocessor
-  -> Qwen3 Thinker multimodal embeddings -> output stream if stream=true</code></pre>
+            <rect x="76" y="218" width="226" height="58" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="94" y="240" class="mega-node-title">RealtimeConnection.handle_event</text>
+            <text x="94" y="258" class="mega-node-small">audio_array: np.ndarray[T]</text>
+            <text x="94" y="271" class="mega-node-small">dtype=float32, range≈[-1, 1]</text>
+
+            <rect x="76" y="310" width="226" height="48" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="94" y="331" class="mega-node-title">audio_queue</text>
+            <text x="94" y="348" class="mega-node-small">Queue[np.ndarray | None]</text>
+
+            <rect x="76" y="392" width="226" height="58" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="94" y="414" class="mega-node-title">buffer_realtime_audio()</text>
+            <text x="94" y="432" class="mega-node-small">segment: ndarray[5s * sr]</text>
+            <text x="94" y="445" class="mega-node-small">yield TokensPrompt + audio</text>
+
+            <rect x="76" y="478" width="226" height="40" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="94" y="502" class="mega-node-title">StreamingInput generator</text>
+          </g>
+
+          <g filter="url(#clean-shadow)">
+            <rect x="420" y="134" width="226" height="48" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="438" y="155" class="mega-node-title">/v1/video/chat/stream</text>
+            <text x="438" y="172" class="mega-node-small">frame / audio / query events</text>
+
+            <rect x="420" y="218" width="226" height="58" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="438" y="240" class="mega-node-title">handle_session buffers</text>
+            <text x="438" y="258" class="mega-node-small">frame_buffer: list[str]</text>
+            <text x="438" y="271" class="mega-node-small">audio_buffer: bytearray</text>
+
+            <rect x="420" y="310" width="226" height="48" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="438" y="331" class="mega-node-title">video.query snapshot</text>
+            <text x="438" y="348" class="mega-node-small">copy frames/audio, clear audio</text>
+
+            <rect x="420" y="392" width="226" height="58" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="438" y="414" class="mega-node-title">_build_messages()</text>
+            <text x="438" y="432" class="mega-node-small">image_pil/url + input_audio?</text>
+            <text x="438" y="445" class="mega-node-small">+ query text</text>
+
+            <rect x="420" y="478" width="226" height="40" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="438" y="502" class="mega-node-title">ChatCompletionRequest</text>
+          </g>
+
+          <g filter="url(#clean-shadow)">
+            <rect x="764" y="134" width="226" height="48" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="782" y="155" class="mega-node-title">/v1/chat/completions</text>
+            <text x="782" y="172" class="mega-node-small">messages: list[dict]</text>
+
+            <rect x="764" y="250" width="226" height="58" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="782" y="272" class="mega-node-title">Renderer / chat template</text>
+            <text x="782" y="290" class="mega-node-small">prompt_text: str</text>
+            <text x="782" y="303" class="mega-node-small">prompt_token_ids: list[int]</text>
+
+            <rect x="764" y="360" width="226" height="58" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="782" y="382" class="mega-node-title">OmniInputPreprocessor</text>
+            <text x="782" y="400" class="mega-node-small">OmniTokenInputs</text>
+            <text x="782" y="413" class="mega-node-small">or MultiModalInput</text>
+
+            <rect x="764" y="478" width="226" height="40" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="782" y="502" class="mega-node-title">one prompt</text>
+          </g>
+
+          <g filter="url(#clean-shadow)">
+            <rect x="1100" y="134" width="250" height="46" rx="8" fill="#ffffff" stroke="#d8b27f"></rect>
+            <text x="1118" y="155" class="mega-node-title">client stream=true</text>
+            <text x="1118" y="172" class="mega-node-small">output stream flag, not input stream</text>
+
+            <rect x="1100" y="238" width="250" height="58" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="1118" y="260" class="mega-node-title">AsyncOmni streaming path</text>
+            <text x="1118" y="278" class="mega-node-small">add_request → streaming_update</text>
+            <text x="1118" y="291" class="mega-node-small">final update: resumable=False</text>
+
+            <rect x="1100" y="354" width="250" height="58" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="1118" y="376" class="mega-node-title">engine.generate(one prompt)</text>
+            <text x="1118" y="394" class="mega-node-small">video/text query path</text>
+            <text x="1118" y="407" class="mega-node-small">not input-streaming</text>
+
+            <rect x="1100" y="470" width="250" height="48" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="1118" y="491" class="mega-node-title">engine scheduler</text>
+            <text x="1118" y="508" class="mega-node-small">OmniRequestOutput stream</text>
+          </g>
+
+          <g filter="url(#clean-shadow)">
+            <rect x="76" y="630" width="190" height="54" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="94" y="652" class="mega-node-title">Qwen3 processor</text>
+            <text x="94" y="670" class="mega-node-small">audio padded to k * hop_length</text>
+
+            <rect x="318" y="630" width="190" height="54" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="336" y="652" class="mega-node-title">prompt placeholders</text>
+            <text x="336" y="670" class="mega-node-small">mm_placeholders positions</text>
+
+            <rect x="560" y="630" width="190" height="54" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="578" y="652" class="mega-node-title">embed_multimodal()</text>
+            <text x="578" y="670" class="mega-node-small">audio/visual blocks</text>
+
+            <rect x="802" y="630" width="190" height="54" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="820" y="652" class="mega-node-title">embed_input_ids()</text>
+            <text x="820" y="670" class="mega-node-small">inputs_embeds [seq, hidden]</text>
+
+            <rect x="1044" y="630" width="190" height="54" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="1062" y="652" class="mega-node-title">Thinker stage 0</text>
+            <text x="1062" y="670" class="mega-node-small">text ids / hidden states</text>
+
+            <rect x="318" y="712" width="190" height="36" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="336" y="735" class="mega-node-title">Talker stage 1</text>
+
+            <rect x="560" y="712" width="190" height="36" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="578" y="735" class="mega-node-title">Code2Wav stage 2</text>
+
+            <rect x="802" y="712" width="190" height="36" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="820" y="735" class="mega-node-title">multimodal_output</text>
+          </g>
+
+          <g filter="url(#clean-shadow)">
+            <rect x="220" y="832" width="220" height="36" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="238" y="855" class="mega-node-title">response.text.delta</text>
+
+            <rect x="560" y="832" width="220" height="36" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="578" y="855" class="mega-node-title">response.audio.delta</text>
+
+            <rect x="900" y="832" width="220" height="36" rx="8" fill="#ffffff" stroke="#d8b27f"></rect>
+            <text x="918" y="855" class="mega-node-title">input_stream feedback</text>
+
+            <rect x="1180" y="832" width="170" height="36" rx="8" fill="#ffffff" stroke="#ccd8e8"></rect>
+            <text x="1198" y="855" class="mega-node-title">done events</text>
+          </g>
+
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M189 182 L189 216"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M189 276 L189 308"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M189 358 L189 390"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M189 450 L189 476"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M302 498 L302 548 L1068 548 L1068 267 L1098 267"></path>
+
+          <path class="mega-edge video" marker-end="url(#clean-arrow-video)" d="M533 182 L533 216"></path>
+          <path class="mega-edge video" marker-end="url(#clean-arrow-video)" d="M533 276 L533 308"></path>
+          <path class="mega-edge video" marker-end="url(#clean-arrow-video)" d="M533 358 L533 390"></path>
+          <path class="mega-edge video" marker-end="url(#clean-arrow-video)" d="M533 450 L533 476"></path>
+          <path class="mega-edge video" marker-end="url(#clean-arrow-video)" d="M646 498 L646 548 L1068 548 L1068 383 L1098 383"></path>
+
+          <path class="mega-edge text" marker-end="url(#clean-arrow-text)" d="M877 182 L877 248"></path>
+          <path class="mega-edge text" marker-end="url(#clean-arrow-text)" d="M877 308 L877 358"></path>
+          <path class="mega-edge text" marker-end="url(#clean-arrow-text)" d="M877 418 L877 476"></path>
+          <path class="mega-edge text" marker-end="url(#clean-arrow-text)" d="M990 498 L1068 498 L1068 383 L1098 383"></path>
+
+          <path class="mega-edge warn dashed" marker-end="url(#clean-arrow-warn)" d="M1225 180 L1225 236"></path>
+          <path class="mega-edge warn" marker-end="url(#clean-arrow-warn)" d="M1225 296 L1225 352"></path>
+          <path class="mega-edge warn" marker-end="url(#clean-arrow-warn)" d="M1225 412 L1225 468"></path>
+          <path class="mega-edge warn" marker-end="url(#clean-arrow-warn)" d="M1225 518 L1225 548 L171 548 L171 628"></path>
+
+          <path class="mega-edge" marker-end="url(#clean-arrow)" d="M266 657 L316 657"></path>
+          <path class="mega-edge video" marker-end="url(#clean-arrow-video)" d="M508 657 L558 657"></path>
+          <path class="mega-edge" marker-end="url(#clean-arrow)" d="M750 657 L800 657"></path>
+          <path class="mega-edge text" marker-end="url(#clean-arrow-text)" d="M992 657 L1042 657"></path>
+
+          <path class="mega-edge warn" marker-end="url(#clean-arrow-warn)" d="M1139 684 L1139 706 L413 706 L413 710"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M508 730 L558 730"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M750 730 L800 730"></path>
+
+          <path class="mega-edge text" marker-end="url(#clean-arrow-text)" d="M1139 684 L1139 786 L330 786 L330 830"></path>
+          <path class="mega-edge audio" marker-end="url(#clean-arrow-audio)" d="M897 748 L897 774 L670 774 L670 830"></path>
+          <path class="mega-edge warn dashed" marker-end="url(#clean-arrow-warn)" d="M1139 684 L1139 806 L1010 806 L1010 830"></path>
+          <path class="mega-edge warn" marker-end="url(#clean-arrow-warn)" d="M1120 850 L1178 850"></path>
+
+          <path class="mega-edge warn dashed" marker-end="url(#clean-arrow-warn)" d="M1010 868 L1010 902 L1380 902 L1380 548 L304 548 L304 498"></path>
+          <text x="1032" y="896" class="mega-label">stage-0 token ids 回灌到 realtime input_stream</text>
+
+          <rect x="76" y="72" width="12" height="12" rx="2" fill="#1c8065"></rect>
+          <text x="94" y="82" class="mega-label">audio realtime: engine 级 streaming input</text>
+          <rect x="386" y="72" width="12" height="12" rx="2" fill="#6d58c6"></rect>
+          <text x="404" y="82" class="mega-label">video: 协议层 stream，query 快照</text>
+          <rect x="696" y="72" width="12" height="12" rx="2" fill="#2f6fda"></rect>
+          <text x="714" y="82" class="mega-label">text/chat: 一次 prompt，输出流式</text>
+          <rect x="1006" y="72" width="12" height="12" rx="2" fill="#b86413"></rect>
+          <text x="1024" y="82" class="mega-label">engine/model/output 控制流</text>
+        </svg>
+      </div>
+      <div class="mega-diagram legacy-mega" aria-label="Qwen3-Omni end-to-end streaming dataflow map">
+        <svg viewBox="0 0 1440 920" role="img">
+          <defs>
+            <marker id="mega-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#4f6f95"></path>
+            </marker>
+            <marker id="mega-arrow-audio" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#1c8065"></path>
+            </marker>
+            <marker id="mega-arrow-video" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#6d58c6"></path>
+            </marker>
+            <marker id="mega-arrow-text" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#2f6fda"></path>
+            </marker>
+            <marker id="mega-arrow-warn" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#b86413"></path>
+            </marker>
+            <filter id="mega-shadow" x="-10%" y="-20%" width="120%" height="150%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#101828" flood-opacity="0.12"></feDropShadow>
+            </filter>
+          </defs>
+
+          <rect x="0" y="0" width="1440" height="920" rx="18" fill="#f8fbff"></rect>
+          <text x="34" y="40" class="mega-title">Qwen3-Omni 流式输入 / 输出全链路调试图</text>
+          <text x="34" y="64" class="mega-subtitle">按一次 debug 调用栈阅读：入口事件 -> 中间变量 shape/type -> engine 边界 -> Qwen3-Omni 多模态 embedding -> text/audio delta。</text>
+
+          <rect x="24" y="92" width="1392" height="98" rx="14" fill="#eef5ff" stroke="#c7d7ee"></rect>
+          <rect x="24" y="210" width="1392" height="180" rx="14" fill="#f7f2ff" stroke="#d9cdf4"></rect>
+          <rect x="24" y="410" width="1392" height="126" rx="14" fill="#fff7ed" stroke="#f1d1a6"></rect>
+          <rect x="24" y="556" width="1392" height="208" rx="14" fill="#effcf6" stroke="#bfe3d1"></rect>
+          <rect x="24" y="784" width="1392" height="104" rx="14" fill="#f3f6fb" stroke="#ccd8e8"></rect>
+
+          <text x="42" y="116" class="mega-band-label">1. Client / Protocol</text>
+          <text x="42" y="234" class="mega-band-label">2. Input Shaping：协议事件变成 prompt / StreamingInput</text>
+          <text x="42" y="434" class="mega-band-label">3. Engine Boundary：是否真正 engine 级 streaming input</text>
+          <text x="42" y="580" class="mega-band-label">4. Qwen3-Omni Model：processor / placeholder / embedding / stages</text>
+          <text x="42" y="808" class="mega-band-label">5. Server Output：text lane + audio lane</text>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="90" y="128" width="210" height="46" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="106" y="148" class="mega-node-title">/v1/realtime</text>
+            <text x="106" y="165" class="mega-node-small">append / commit, base64 PCM16</text>
+
+            <rect x="390" y="128" width="238" height="46" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="406" y="148" class="mega-node-title">/v1/video/chat/stream</text>
+            <text x="406" y="165" class="mega-node-small">video.frame / audio.chunk / query</text>
+
+            <rect x="730" y="128" width="220" height="46" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="746" y="148" class="mega-node-title">/v1/chat/completions</text>
+            <text x="746" y="165" class="mega-node-small">messages: list[dict]</text>
+
+            <rect x="1060" y="128" width="230" height="46" rx="8" fill="#ffffff" stroke="#d8b27f"></rect>
+            <text x="1076" y="148" class="mega-node-title">client stream=true</text>
+            <text x="1076" y="165" class="mega-node-small">输出流式，不等于输入流式</text>
+          </g>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="70" y="256" width="184" height="58" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="86" y="278" class="mega-node-title">RealtimeConnection</text>
+            <text x="86" y="296" class="mega-node-small">handle_event()</text>
+            <text x="86" y="309" class="mega-node-small">audio_array: np.ndarray[T], float32</text>
+
+            <rect x="282" y="256" width="170" height="58" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="298" y="278" class="mega-node-title">audio_queue</text>
+            <text x="298" y="296" class="mega-node-small">Queue[np.ndarray | None]</text>
+            <text x="298" y="309" class="mega-node-small">None = final sentinel</text>
+
+            <rect x="480" y="256" width="202" height="58" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="496" y="278" class="mega-node-title">buffer_realtime_audio()</text>
+            <text x="496" y="296" class="mega-node-small">segment: ndarray[5s * sr]</text>
+            <text x="496" y="309" class="mega-node-small">async_chunk controls yield timing</text>
+
+            <rect x="710" y="256" width="220" height="58" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="726" y="278" class="mega-node-title">StreamingInput generator</text>
+            <text x="726" y="296" class="mega-node-small">TokensPrompt + audio segment</text>
+            <text x="726" y="309" class="mega-node-small">AsyncGenerator[StreamingInput]</text>
+          </g>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="70" y="334" width="192" height="46" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="86" y="354" class="mega-node-title">frame_buffer</text>
+            <text x="86" y="371" class="mega-node-small">list[str], len ≤ max_frames</text>
+
+            <rect x="282" y="334" width="192" height="46" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="298" y="354" class="mega-node-title">audio_buffer</text>
+            <text x="298" y="371" class="mega-node-small">bytearray[num_bytes], PCM16</text>
+
+            <rect x="494" y="334" width="204" height="46" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="510" y="354" class="mega-node-title">video.query snapshot</text>
+            <text x="510" y="371" class="mega-node-small">query_frames + query_audio_buffer</text>
+
+            <rect x="718" y="334" width="228" height="46" rx="8" fill="#ffffff" stroke="#b9a7e7"></rect>
+            <text x="734" y="354" class="mega-node-title">_build_messages()</text>
+            <text x="734" y="371" class="mega-node-small">image_pil/image_url + audio? + text?</text>
+
+            <rect x="1010" y="286" width="228" height="58" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="1026" y="308" class="mega-node-title">Renderer / chat template</text>
+            <text x="1026" y="326" class="mega-node-small">prompt_text: str</text>
+            <text x="1026" y="339" class="mega-node-small">prompt_token_ids: list[int]</text>
+
+            <rect x="1010" y="356" width="260" height="48" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="1026" y="377" class="mega-node-title">OmniInputPreprocessor._process_text</text>
+            <text x="1026" y="394" class="mega-node-small">OmniTokenInputs | MultiModalInput</text>
+          </g>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="130" y="458" width="252" height="54" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="146" y="479" class="mega-node-title">AsyncOmni._add_streaming_input_request</text>
+            <text x="146" y="496" class="mega-node-small">first chunk: add_request(resumable=True)</text>
+            <text x="146" y="509" class="mega-node-small">later: streaming_update(resumable=True)</text>
+
+            <rect x="426" y="458" width="212" height="54" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="442" y="479" class="mega-node-title">final update</text>
+            <text x="442" y="496" class="mega-node-small">TokensPrompt([0])</text>
+            <text x="442" y="509" class="mega-node-small">resumable=False</text>
+
+            <rect x="810" y="458" width="232" height="54" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="826" y="479" class="mega-node-title">engine.generate(one prompt)</text>
+            <text x="826" y="496" class="mega-node-small">video/text query path</text>
+            <text x="826" y="509" class="mega-node-small">not engine-level input streaming</text>
+
+            <rect x="1100" y="458" width="210" height="54" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="1116" y="479" class="mega-node-title">engine scheduler</text>
+            <text x="1116" y="496" class="mega-node-small">OmniRequestOutput stream</text>
+            <text x="1116" y="509" class="mega-node-small">stage_id / final_output_type</text>
+          </g>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="96" y="612" width="220" height="56" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="112" y="634" class="mega-node-title">Qwen3 processor</text>
+            <text x="112" y="652" class="mega-node-small">audio padded to k * hop_length</text>
+            <text x="112" y="665" class="mega-node-small">image/video BatchFeature</text>
+
+            <rect x="350" y="612" width="220" height="56" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="366" y="634" class="mega-node-title">prompt placeholders</text>
+            <text x="366" y="652" class="mega-node-small">mm_placeholders: positions</text>
+            <text x="366" y="665" class="mega-node-small">audio-in-video may derive audio</text>
+
+            <rect x="604" y="612" width="236" height="56" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="620" y="634" class="mega-node-title">embed_multimodal()</text>
+            <text x="620" y="652" class="mega-node-small">audio: [num_audio_tokens, hidden]</text>
+            <text x="620" y="665" class="mega-node-small">visual: [num_visual_tokens, hidden]</text>
+
+            <rect x="874" y="612" width="228" height="56" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="890" y="634" class="mega-node-title">embed_input_ids()</text>
+            <text x="890" y="652" class="mega-node-small">inputs_embeds: [seq_len, hidden]</text>
+            <text x="890" y="665" class="mega-node-small">merge_interleaved_embeddings?</text>
+
+            <rect x="1140" y="612" width="200" height="56" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="1156" y="634" class="mega-node-title">Thinker stage 0</text>
+            <text x="1156" y="652" class="mega-node-small">text token ids / hidden states</text>
+          </g>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="372" y="696" width="202" height="44" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="388" y="718" class="mega-node-title">Talker stage 1</text>
+            <text x="388" y="735" class="mega-node-small">audio tokens / codec features</text>
+
+            <rect x="620" y="696" width="202" height="44" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="636" y="718" class="mega-node-title">Code2Wav stage 2</text>
+            <text x="636" y="735" class="mega-node-small">waveform: np.ndarray / tensor</text>
+
+            <rect x="866" y="696" width="224" height="44" rx="8" fill="#ffffff" stroke="#89cab1"></rect>
+            <text x="882" y="718" class="mega-node-title">multimodal_output</text>
+            <text x="882" y="735" class="mega-node-small">audio chunks + accumulated text</text>
+          </g>
+
+          <g filter="url(#mega-shadow)">
+            <rect x="210" y="828" width="238" height="42" rx="8" fill="#ffffff" stroke="#9fb8d8"></rect>
+            <text x="226" y="849" class="mega-node-title">response.text.delta</text>
+            <text x="226" y="865" class="mega-node-small">delta_text: str</text>
+
+            <rect x="516" y="828" width="250" height="42" rx="8" fill="#ffffff" stroke="#88cbb0"></rect>
+            <text x="532" y="849" class="mega-node-title">response.audio.delta</text>
+            <text x="532" y="865" class="mega-node-small">PCM16/WAV base64</text>
+
+            <rect x="842" y="828" width="230" height="42" rx="8" fill="#ffffff" stroke="#e7ad69"></rect>
+            <text x="858" y="849" class="mega-node-title">input_stream feedback</text>
+            <text x="858" y="865" class="mega-node-small">Queue[list[int]] from stage-0</text>
+
+            <rect x="1148" y="828" width="206" height="42" rx="8" fill="#ffffff" stroke="#d3dbe8"></rect>
+            <text x="1164" y="849" class="mega-node-title">done events</text>
+            <text x="1164" y="865" class="mega-node-small">text.done / audio.done</text>
+          </g>
+
+          <path class="mega-edge audio" d="M195 174 C195 212, 162 222, 162 254"></path>
+          <path class="mega-edge video" d="M509 174 C509 230, 166 276, 166 332"></path>
+          <path class="mega-edge video" d="M509 174 C510 236, 378 278, 378 332"></path>
+          <path class="mega-edge text" d="M840 174 C860 226, 1086 238, 1124 284"></path>
+          <path class="mega-edge warn dashed" d="M1175 174 C1175 244, 1245 362, 1205 456"></path>
+
+          <path class="mega-edge audio" d="M254 285 L280 285"></path>
+          <path class="mega-edge audio" d="M452 285 L478 285"></path>
+          <path class="mega-edge audio" d="M682 285 L708 285"></path>
+          <path class="mega-edge audio" d="M820 314 C720 384, 284 394, 256 456"></path>
+          <path class="mega-edge audio" d="M382 485 L424 485"></path>
+          <path class="mega-edge audio" d="M532 512 C532 558, 210 560, 206 610"></path>
+
+          <path class="mega-edge video" d="M262 357 L280 357"></path>
+          <path class="mega-edge video" d="M474 357 L492 357"></path>
+          <path class="mega-edge video" d="M698 357 L716 357"></path>
+          <path class="mega-edge video" d="M946 357 C980 356, 1002 354, 1010 356"></path>
+          <path class="mega-edge text" d="M1124 344 L1124 354"></path>
+          <path class="mega-edge text" d="M1140 404 C1118 432, 1014 432, 940 456"></path>
+
+          <path class="mega-edge warn" d="M638 485 C720 485, 742 485, 808 485"></path>
+          <path class="mega-edge warn" d="M1042 485 L1098 485"></path>
+          <path class="mega-edge warn" d="M1205 512 C1205 554, 1240 566, 1240 610"></path>
+          <path class="mega-edge warn" d="M256 512 C278 568, 138 568, 206 610"></path>
+          <path class="mega-edge warn" d="M926 512 C898 554, 722 554, 722 610"></path>
+
+          <path class="mega-edge audio" d="M316 640 L348 640"></path>
+          <path class="mega-edge video" d="M570 640 L602 640"></path>
+          <path class="mega-edge" d="M840 640 L872 640"></path>
+          <path class="mega-edge text" d="M1102 640 L1138 640"></path>
+          <path class="mega-edge warn" d="M1240 668 C1180 704, 1114 716, 1092 718"></path>
+          <path class="mega-edge warn" d="M1140 652 C960 692, 800 700, 824 718"></path>
+          <path class="mega-edge audio" d="M574 718 L618 718"></path>
+          <path class="mega-edge audio" d="M822 718 L864 718"></path>
+
+          <path class="mega-edge text" d="M1240 668 C1188 788, 374 776, 330 826"></path>
+          <path class="mega-edge audio" d="M978 740 C900 812, 700 792, 642 826"></path>
+          <path class="mega-edge warn dashed" d="M1240 668 C1180 758, 984 754, 957 826"></path>
+          <path class="mega-edge warn" d="M766 849 L840 849"></path>
+          <path class="mega-edge warn" d="M1072 849 L1146 849"></path>
+
+          <path class="mega-edge warn dashed" d="M957 828 C955 770, 1320 760, 1340 632 C1360 510, 990 478, 638 485"></path>
+          <text x="1110" y="770" class="mega-label">stage-0 token ids 回灌给 realtime input_stream</text>
+
+          <rect x="76" y="84" width="12" height="12" rx="2" fill="#1c8065"></rect>
+          <text x="94" y="94" class="mega-label">audio realtime true streaming input</text>
+          <rect x="312" y="84" width="12" height="12" rx="2" fill="#6d58c6"></rect>
+          <text x="330" y="94" class="mega-label">video protocol stream, query snapshot</text>
+          <rect x="600" y="84" width="12" height="12" rx="2" fill="#2f6fda"></rect>
+          <text x="618" y="94" class="mega-label">text/chat one prompt, streaming output</text>
+          <rect x="856" y="84" width="12" height="12" rx="2" fill="#b86413"></rect>
+          <text x="874" y="94" class="mega-label">engine/model/output control flow</text>
+        </svg>
+      </div>
+      <div class="debug-trace">
+        <p class="debug-title">像 debug 一样走一遍：从 websocket/request 到 Qwen3-Omni 输出</p>
+        <div class="debug-branch">
+          <div class="debug-lane">
+            <h4>音频 realtime 分支</h4>
+            <div class="debug-var">
+              <span class="var-name">event.type</span>
+              <span class="shape audio">"input_audio_buffer.append"</span>
+              <span class="shape warn">"commit"</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio_array</span>
+              <span class="shape audio">np.ndarray[T]</span>
+              <span class="shape">float32</span>
+            </div>
+          </div>
+          <div class="debug-lane">
+            <h4>视频 stream 分支</h4>
+            <div class="debug-var">
+              <span class="var-name">frame_buffer</span>
+              <span class="shape video">list[str]</span>
+              <span class="shape">len ≤ max_frames</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">query_frames</span>
+              <span class="shape video">snapshot list[str]</span>
+            </div>
+          </div>
+          <div class="debug-lane">
+            <h4>普通文本 / chat 分支</h4>
+            <div class="debug-var">
+              <span class="var-name">messages</span>
+              <span class="shape">list[dict]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">prompt_token_ids</span>
+              <span class="shape">list[int]</span>
+              <span class="shape">[seq_len]</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ 三条输入在这里被整理成模型 prompt / engine prompt ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">RealtimeConnection / VideoHandler / Renderer</span>
+            <span class="method-badge">input shaping</span>
+            <strong>把协议事件变成 prompt 边界</strong>
+            <small>realtime audio 是连续 generator；video/text 是一次 query/request 的 prompt。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">StreamingInput.prompt</span>
+              <span class="shape">engine_input</span>
+              <span class="shape audio">audio segment</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">ChatCompletionRequest.messages</span>
+              <span class="shape">system?</span>
+              <span class="shape video">image_pil/image_url</span>
+              <span class="shape audio">input_audio?</span>
+              <span class="shape">text?</span>
+            </div>
+            <div class="debug-var wide">
+              <span class="var-name">关键区别</span>
+              realtime audio 会多次 yield <code>StreamingInput</code>；video/text 会先把输入快照成一次完整 prompt。
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ engine 边界：request 是新增、更新，还是一次性 generate ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">AsyncOmni</span>
+            <span class="method-badge">_add_streaming_input_request / generate</span>
+            <strong>把 prompt 交给 engine</strong>
+            <small>这里是最重要的流式输入分界线。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">has_submitted_first_chunk</span>
+              <span class="shape warn">False → add_request</span>
+              <span class="shape warn">True → streaming_update</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">resumable</span>
+              <span class="shape audio">True for chunks</span>
+              <span class="shape warn">False for final</span>
+            </div>
+            <div class="debug-var wide">
+              <span class="var-name">engine_prompt</span>
+              video/text query 走一次 <code>engine.generate(prompt=engine_prompt)</code>；audio realtime 走 <code>prompt=streaming_input_gen</code>。
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ Qwen3-Omni Thinker：token 序列 + 多模态块合成 embedding 矩阵 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">Qwen3OmniMoeThinker*</span>
+            <span class="method-badge">processor / embed_input_ids</span>
+            <strong>把 text/audio/image/video 放到同一个输入矩阵</strong>
+            <small>debug 时重点看 placeholder mask 和 multimodal_embeddings 的顺序。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">input_ids</span>
+              <span class="shape">[seq_len]</span>
+              <span class="shape">int64</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">inputs_embeds</span>
+              <span class="shape">[seq_len, hidden]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio_embeddings</span>
+              <span class="shape audio">[num_audio_frames, hidden]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">video/image_embeddings</span>
+              <span class="shape video">[num_visual_tokens, hidden]</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ Omni 多 stage 输出：文本 token 和音频 waveform 被拆成 websocket delta ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">RealtimeConnection / VideoHandler</span>
+            <span class="method-badge">_run_generation / _process_query_engine</span>
+            <strong>把 engine output 拆成 text lane 和 audio lane</strong>
+            <small>text 是累计字符串切 delta；audio 是累计 waveform 去重后发新增片段。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">new_token_ids</span>
+              <span class="shape">list[int]</span>
+              <span class="shape">completion delta</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio_chunks</span>
+              <span class="shape audio">list[np.ndarray]</span>
+              <span class="shape audio">waveform delta</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">response.text.delta</span>
+              <span class="shape">str</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">response.audio.delta</span>
+              <span class="shape audio">base64 PCM16/WAV</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">端到端总图：三种输入如何汇到 Qwen3-Omni，再流式输出</p>
+        <div class="diagram-grid">
+          <div class="lane">
+            <p class="lane-title">client / protocol layer</p>
+            <div class="flowline">
+              <span class="node-soft">/v1/realtime<br><small>audio append / commit</small></span>
+              <span class="node-soft">/v1/video/chat/stream<br><small>frame / audio / query</small></span>
+              <span class="node-soft">/v1/chat/completions<br><small>messages</small></span>
+            </div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">input shaping layer</p>
+            <div class="flowline">
+              <span class="node-green">audio_queue</span>
+              <span class="arrow">→</span>
+              <span class="node-green">Qwen3ASRRealtimeBuffer</span>
+              <span class="arrow">→</span>
+              <span class="node-warn">StreamingInput generator</span>
+            </div>
+            <div class="flowline" style="margin-top: 8px;">
+              <span class="node-green">frame_buffer</span>
+              <span class="node-green">audio_buffer</span>
+              <span class="arrow">→</span>
+              <span class="node-warn">video.query snapshot</span>
+              <span class="arrow">→</span>
+              <span class="node">ChatCompletionRequest</span>
+            </div>
+            <div class="flowline" style="margin-top: 8px;">
+              <span class="node-green">text messages</span>
+              <span class="arrow">→</span>
+              <span class="node">renderer / chat template</span>
+              <span class="arrow">→</span>
+              <span class="node">OmniInputPreprocessor</span>
+            </div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">engine boundary</p>
+            <div class="diagram-grid cols-2">
+              <div>
+                <p class="caption" style="margin-top: 0;">audio realtime</p>
+                <div class="flowline">
+                  <span class="node-green">add_request</span>
+                  <span class="arrow">→</span>
+                  <span class="node-green">streaming_update</span>
+                  <span class="arrow">→</span>
+                  <span class="node-warn">final update</span>
+                </div>
+              </div>
+              <div>
+                <p class="caption" style="margin-top: 0;">text / video query</p>
+                <div class="flowline">
+                  <span class="node-green">one prompt</span>
+                  <span class="arrow">→</span>
+                  <span class="node-green">engine.generate</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">Qwen3-Omni model layer</p>
+            <div class="flowline">
+              <span class="node">prompt ids</span>
+              <span class="node mm">audio / image / video data</span>
+              <span class="arrow">→</span>
+              <span class="node-green">multimodal processor</span>
+              <span class="arrow">→</span>
+              <span class="node-green">Thinker embeddings</span>
+              <span class="arrow">→</span>
+              <span class="node-warn">Talker</span>
+              <span class="arrow">→</span>
+              <span class="node-warn">Code2Wav</span>
+            </div>
+            <div class="diagram-grid cols-2" style="margin-top: 10px;">
+              <div class="matrix cols-4">
+                <span class="matrix-cell">t0</span><span class="matrix-cell">h</span><span class="matrix-cell">...</span><span class="matrix-cell">h</span>
+                <span class="matrix-cell mm">audio</span><span class="matrix-cell mm">block</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span>
+                <span class="matrix-cell mm">video</span><span class="matrix-cell mm">block</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span>
+                <span class="matrix-cell">tn</span><span class="matrix-cell">h</span><span class="matrix-cell">...</span><span class="matrix-cell">h</span>
+              </div>
+              <div class="flowline">
+                <span class="node-soft">stage 0<br><small>text tokens</small></span>
+                <span class="arrow">→</span>
+                <span class="node-soft">stage 1<br><small>audio tokens</small></span>
+                <span class="arrow">→</span>
+                <span class="node-soft">stage 2<br><small>waveform</small></span>
+              </div>
+            </div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">server output layer</p>
+            <div class="diagram-grid cols-2">
+              <div class="flowline">
+                <span class="node-green">text token ids</span>
+                <span class="arrow">→</span>
+                <span class="node-warn">response.text.delta</span>
+                <span class="node-warn">TranscriptionDelta</span>
+              </div>
+              <div class="flowline">
+                <span class="node-green">waveform delta</span>
+                <span class="arrow">→</span>
+                <span class="node">PCM16 / WAV base64</span>
+                <span class="arrow">→</span>
+                <span class="node-warn">response.audio.delta</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="caption">关键分界：只有 `/v1/realtime` audio 会在 engine 层持续 add/update 同一个 request；video 和普通 chat 是先在协议/请求层组织好 prompt，再以一次 query/request 进入 engine。</p>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">三种输入的几何直观</p>
+        <div class="diagram-grid cols-3">
+          <div class="lane">
+            <p class="lane-title">audio realtime</p>
+            <div class="timeline">
+              <span class="segment audio">chunk0</span>
+              <span class="segment audio">chunk1</span>
+              <span class="segment audio">chunk2</span>
+              <span class="arrow">→</span>
+              <span class="node-soft">audio_queue</span>
+            </div>
+            <div class="flowline" style="margin-top: 8px;">
+              <span class="node-green">5s segment</span>
+              <span class="node-green">5s segment</span>
+              <span class="node-warn">tail</span>
+            </div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">text</p>
+            <div class="token-row">
+              <span class="token">system</span>
+              <span class="token">user text</span>
+              <span class="token">assistant</span>
+              <span class="arrow">→</span>
+              <span class="node">token ids</span>
+            </div>
+            <div class="matrix cols-4" style="margin-top: 8px;">
+              <span class="matrix-cell">e00</span><span class="matrix-cell">e01</span><span class="matrix-cell">...</span><span class="matrix-cell">e0d</span>
+              <span class="matrix-cell">e10</span><span class="matrix-cell">e11</span><span class="matrix-cell">...</span><span class="matrix-cell">e1d</span>
+            </div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">video stream</p>
+            <div class="timeline">
+              <span class="frame">F0</span><span class="frame">F1</span><span class="frame">F2</span><span class="frame">F3</span><span class="frame">Fn</span>
+            </div>
+            <div class="flowline" style="margin-top: 8px;">
+              <span class="arrow">query →</span>
+              <span class="frame selected">F0</span><span class="frame selected">F2</span><span class="frame selected">Fn</span>
+              <span class="node-soft">text + audio?</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">三条入口到 engine 的路径</p>
+        <div class="diagram-grid">
+          <div class="flowline">
+            <span class="node-soft">/v1/realtime</span><span class="arrow">→</span>
+            <span class="node">audio append</span><span class="arrow">→</span>
+            <span class="node">buffer_realtime_audio</span><span class="arrow">→</span>
+            <span class="node-green">StreamingInput</span><span class="arrow">→</span>
+            <span class="node-green">add/update</span><span class="arrow">→</span>
+            <span class="node-warn">audio delta</span>
+          </div>
+          <div class="flowline">
+            <span class="node-soft">/v1/video/chat/stream</span><span class="arrow">→</span>
+            <span class="node">frame/audio buffers</span><span class="arrow">→</span>
+            <span class="node">video.query snapshot</span><span class="arrow">→</span>
+            <span class="node-green">ChatCompletionRequest</span><span class="arrow">→</span>
+            <span class="node-warn">text/audio delta</span>
+          </div>
+          <div class="flowline">
+            <span class="node-soft">/v1/chat/completions</span><span class="arrow">→</span>
+            <span class="node">messages</span><span class="arrow">→</span>
+            <span class="node">renderer</span><span class="arrow">→</span>
+            <span class="node-green">OmniInputPreprocessor</span><span class="arrow">→</span>
+            <span class="node-warn">output stream</span>
+          </div>
+        </div>
+      </div>
       <div class="note">所以，“音频 realtime”是 engine 层真正的 streaming input；“视频 stream”是协议层持续收集视频帧，query 时快照成一次多模态请求；“文本输入”目前主要是 request/query 边界的输入，文本 streaming 更多体现在输出 delta。</div>
     </section>
 
     <section id="audio">
       <h2>2. 音频 realtime streaming</h2>
-      <pre class="flow"><code>音频 realtime 总图
-
-客户端 websocket
-  append(base64 pcm16)  append(base64 pcm16)  commit(final=false)  append(...)  commit(final=true)
-        |                     |                    |                  |               |
-        v                     v                    v                  v               v
-audio_queue:   [float32 chunk] [float32 chunk]  start task      [float32 chunk]     [None]
-                                        |
-                                        v
-Qwen3ASRRealtimeBuffer:  [连续 waveform 时间轴] -> [segment 0] -> [segment 1] -> [tail]
-                                        |
-                                        v
-AsyncOmni:  add_request(segment 0) -> streaming_update(segment 1) -> final_update</code></pre>
+      <div class="debug-trace">
+        <p class="debug-title">断点视角：音频 chunk 如何一路变成 StreamingInput</p>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">RealtimeConnection</span>
+            <span class="method-badge">handle_event</span>
+            <strong>客户端 append 事件进入 websocket handler</strong>
+            <small>此时还没有 engine request，只是在解码和入队。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">append_event.audio</span>
+              <span class="shape">base64 str</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio_bytes</span>
+              <span class="shape">bytes</span>
+              <span class="shape warn">PCM16</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio_array</span>
+              <span class="shape audio">np.ndarray[T]</span>
+              <span class="shape">float32</span>
+              <span class="shape">[-1, 1]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">self.audio_queue</span>
+              <span class="shape audio">Queue[np.ndarray | None]</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ commit(final=false) 只负责启动后台 generation task ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">RealtimeConnection</span>
+            <span class="method-badge">start_generation</span>
+            <strong>把输入流和回流 token 队列接起来</strong>
+            <small>audio_stream 向前走，input_stream 把 stage-0 token ids 回灌回来。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">audio_stream</span>
+              <span class="shape audio">AsyncGenerator[np.ndarray]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">input_stream</span>
+              <span class="shape">Queue[list[int]]</span>
+            </div>
+            <div class="debug-var wide">
+              <span class="var-name">streaming_input_gen</span>
+              <span class="shape audio">AsyncGenerator[StreamingInput]</span>
+              这是后面传给 <code>AsyncOmni.generate(prompt=...)</code> 的对象。
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ 模型类按 5 秒窗口切片，并把音频塞进 multi_modal_data ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">Qwen3OmniMoeForConditionalGeneration</span>
+            <span class="method-badge">buffer_realtime_audio</span>
+            <strong>从连续 waveform 读出 segment</strong>
+            <small>debug 这里时重点看 `async_chunk`、`buffer.read_audio()`、`buffer.flush()`。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">segment</span>
+              <span class="shape audio">np.ndarray[5s * sampling_rate]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">prompt_token_ids</span>
+              <span class="shape">list[int]</span>
+              <span class="shape">fixed template</span>
+            </div>
+            <div class="debug-var wide">
+              <span class="var-name">yield TokensPrompt</span>
+              <span class="shape">prompt_token_ids=[...]</span>
+              <span class="shape audio">multi_modal_data={"audio": segment}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">音频 realtime 总图</p>
+        <div class="timeline">
+          <span class="node-soft">append<br><small>base64 pcm16</small></span>
+          <span class="node-soft">append<br><small>base64 pcm16</small></span>
+          <span class="node-warn">commit<br><small>final=false</small></span>
+          <span class="node-soft">append</span>
+          <span class="node-warn">commit<br><small>final=true</small></span>
+        </div>
+        <div class="flowline" style="margin-top: 10px;">
+          <span class="node">audio_queue</span><span class="arrow">→</span>
+          <span class="segment audio">float32 chunk</span>
+          <span class="segment audio">float32 chunk</span>
+          <span class="segment tail">None</span>
+          <span class="arrow">→</span>
+          <span class="node-green">Qwen3ASRRealtimeBuffer</span>
+          <span class="arrow">→</span>
+          <span class="node-green">segment 0</span>
+          <span class="node-green">segment 1</span>
+          <span class="node-warn">tail</span>
+        </div>
+        <div class="flowline" style="margin-top: 10px;">
+          <span class="node-soft">AsyncOmni</span>
+          <span class="arrow">→</span>
+          <span class="node-green">add_request</span>
+          <span class="arrow">→</span>
+          <span class="node-green">streaming_update</span>
+          <span class="arrow">→</span>
+          <span class="node-warn">final_update</span>
+        </div>
+      </div>
 
       <div class="method">
         <p class="method-title"><span class="tag">上游 vLLM</span> 类 <code>RealtimeConnection</code>，方法 <code>handle_event</code></p>
@@ -325,25 +1741,29 @@ AsyncOmni:  add_request(segment 0) -> streaming_update(segment 1) -> final_updat
             await self.start_generation()
     else:
         await self.send_error(f"Unknown event type: {event_type}", "unknown_event")</code></pre>
-        <pre class="flow"><code>几何图：append 只改变输入队列，commit 才改变推理状态
-
-base64 字符串
-  "AAECAw..."
-      |
-      v  b64decode
-PCM16 bytes
-  [b0 b1][b2 b3][b4 b5]...
-      |
-      v  np.frombuffer(int16) / 32768
-float32 waveform 向量
-  [x0, x1, x2, x3, ... xT]
-      |
-      v
-audio_queue
-  head -> [chunk A] -> [chunk B] -> ... -> tail
-
-commit(final=false):  启动 generation task
-commit(final=true):   入队 [None]，表示 waveform 时间轴结束</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">append 只改变输入队列，commit 才改变推理状态</p>
+          <div class="flowline">
+            <span class="node-soft">base64<br><small>AAECAw...</small></span>
+            <span class="arrow">→</span>
+            <span class="node">PCM16 bytes</span>
+            <span class="arrow">→</span>
+            <span class="node-green">float32 waveform</span>
+            <span class="arrow">→</span>
+            <span class="node-green">audio_queue</span>
+          </div>
+          <div class="queue-row" style="margin-top: 10px;">
+            <span class="byte">b0</span><span class="byte">b1</span><span class="byte">b2</span>
+            <span class="arrow">→</span>
+            <span class="segment audio">x0</span><span class="segment audio">x1</span><span class="segment audio">x2</span>
+            <span class="arrow">→</span>
+            <span class="segment audio">chunk A</span><span class="segment audio">chunk B</span><span class="segment tail">None</span>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-warn">commit final=false<br><small>start_generation</small></span>
+            <span class="node-warn">commit final=true<br><small>put None sentinel</small></span>
+          </div>
+        </div>
         <ol class="explain">
           <li>方法先取 <code>event["type"]</code>，整个 realtime 输入协议就是靠这个字段分发。</li>
           <li><code>session.update</code> 只做模型校验。没有通过这个事件，后面的 <code>commit</code> 不会启动生成。</li>
@@ -374,22 +1794,28 @@ commit(final=true):   入队 [None]，表示 waveform 时间轴结束</code></pr
     self.generation_task = asyncio.create_task(
         self._run_generation(streaming_input_gen, input_stream)
     )</code></pre>
-        <pre class="flow"><code>几何图：两个方向的异步通道
-
-音频方向：客户端 -> audio_queue -> audio_stream_generator -> transcribe_realtime -> StreamingInput
-
-文本上下文方向：engine stage-0 output token ids -> input_stream queue
-
-             +------------------------+
-audio_queue  | audio_stream_generator |----> audio ndarray stream
-             +------------------------+
-                                                   |
-                                                   v
-             +------------------------+     +----------------------+
-input_stream | Queue[list[int]]       |<----| _run_generation      |
-             +------------------------+     +----------------------+
-
-start_generation 只是把这两个通道接好，然后启动后台 task。</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">两个方向的异步通道</p>
+          <div class="diagram-grid cols-2">
+            <div class="lane">
+              <p class="lane-title">音频方向</p>
+              <div class="flowline">
+                <span class="node-soft">audio_queue</span><span class="arrow">→</span>
+                <span class="node">audio_stream_generator</span><span class="arrow">→</span>
+                <span class="node-green">transcribe_realtime</span><span class="arrow">→</span>
+                <span class="node-green">StreamingInput</span>
+              </div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">上下文回流</p>
+              <div class="flowline">
+                <span class="node-warn">engine stage-0 token ids</span><span class="arrow">→</span>
+                <span class="node-soft">input_stream<br><small>Queue[list[int]]</small></span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">start_generation 的作用是把这两个通道接好，并把 `_run_generation` 放到后台 task。</p>
+        </div>
         <ol class="explain">
           <li>已有 generation task 未结束时，重复 commit 会被忽略，避免同一个 websocket connection 同时跑两条 engine request。</li>
           <li><code>audio_stream_generator()</code> 把 <code>audio_queue</code> 包装成 async generator；它遇到 <code>None</code> sentinel 会停止。</li>
@@ -422,25 +1848,30 @@ start_generation 只是把这两个通道接好，然后启动后台 task。</co
         (engine_input,) = await renderer.render_cmpl_async([parsed_prompt])
 
         yield StreamingInput(prompt=engine_input)</code></pre>
-        <pre class="flow"><code>几何图：模型专属 prompt -> 通用 engine input
-
-audio ndarray stream + input_stream
-          |
-          v
-model_cls.buffer_realtime_audio
-          |
-          v
-PromptType
-  TokensPrompt {
-    prompt_token_ids: [t0, t1, ..., tn]
-    multi_modal_data: { audio: [x0, x1, ..., xT] }
-  }
-          |
-          v
-parse_model_prompt + renderer
-          |
-          v
-StreamingInput(prompt=engine_input)</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">模型专属 prompt 到通用 engine input</p>
+          <div class="flowline">
+            <span class="node-soft">audio ndarray stream<br><small>+ input_stream</small></span>
+            <span class="arrow">→</span>
+            <span class="node-green">buffer_realtime_audio</span>
+            <span class="arrow">→</span>
+            <span class="node">TokensPrompt</span>
+            <span class="arrow">→</span>
+            <span class="node">parse + renderer</span>
+            <span class="arrow">→</span>
+            <span class="node-green">StreamingInput</span>
+          </div>
+          <div class="diagram-grid cols-2" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">prompt_token_ids</p>
+              <div class="token-row"><span class="token">t0</span><span class="token">t1</span><span class="token">...</span><span class="token">tn</span></div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">multi_modal_data.audio</p>
+              <div class="timeline"><span class="segment audio">x0</span><span class="segment audio">x1</span><span class="segment audio">...</span><span class="segment audio">xT</span></div>
+            </div>
+          </div>
+        </div>
         <ol class="explain">
           <li>这个方法不懂 Qwen3-Omni 的切片策略，只负责把模型类产出的 prompt 渲染成 engine input。</li>
           <li><code>self.model_cls.buffer_realtime_audio(...)</code> 是模型定制点；Qwen3-Omni 就是在这里把连续音频切成 segment。</li>
@@ -493,27 +1924,37 @@ async def buffer_realtime_audio(
             prompt_token_ids=prompt_token_ids,
             multi_modal_data={"audio": remaining},
         )</code></pre>
-        <pre class="flow"><code>几何图：连续音频时间轴被切成多块 TokensPrompt
-
-输入 waveform 时间轴:
-  t=0s                                                        t=end
-  |---- client chunk ----|-- chunk --|--------- chunk ---------|-- tail --|
-
-Qwen3ASRRealtimeBuffer 内部视图:
-  |----------- 5s segment -----------|----------- 5s segment -----------| tail |
-
-每个 yield 的形状:
-  prompt_token_ids:
-    [&lt;|im_start|&gt;, user, AUDIO_PLACEHOLDER, &lt;|im_end|&gt;, &lt;|im_start|&gt;, assistant]
-
-  multi_modal_data["audio"]:
-    segment 向量 [sample0, sample1, sample2, ... sampleN]
-
-async_chunk=true:
-  segment 满 5 秒就 yield
-
-async_chunk=false:
-  中间不 yield，只在 flush 时交出 tail/整段</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">连续音频时间轴被切成多块 TokensPrompt</p>
+          <div class="lane">
+            <p class="lane-title">输入 waveform</p>
+            <div class="timeline">
+              <span class="segment audio">client chunk</span>
+              <span class="segment audio">chunk</span>
+              <span class="segment audio">long chunk</span>
+              <span class="segment tail">tail</span>
+            </div>
+          </div>
+          <div class="lane" style="margin-top: 10px;">
+            <p class="lane-title">Qwen3ASRRealtimeBuffer</p>
+            <div class="timeline">
+              <span class="segment audio" style="min-width: 180px;">5s segment</span>
+              <span class="segment audio" style="min-width: 180px;">5s segment</span>
+              <span class="segment tail">tail</span>
+            </div>
+          </div>
+          <div class="diagram-grid cols-2" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">prompt_token_ids</p>
+              <div class="token-row"><span class="token">&lt;im_start&gt;</span><span class="token">user</span><span class="token mm">AUDIO</span><span class="token">assistant</span></div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">multi_modal_data["audio"]</p>
+              <div class="timeline"><span class="segment audio">sample0</span><span class="segment audio">sample1</span><span class="segment audio">...</span><span class="segment audio">sampleN</span></div>
+            </div>
+          </div>
+          <p class="caption">async_chunk=true 时满一个 segment 就 yield；async_chunk=false 时主要等 flush 交出尾段/整段。</p>
+        </div>
         <ol class="explain">
           <li>先从 <code>model_config</code> 取 HF processor、feature extractor、sampling rate 和 tokenizer。采样率必须来自模型 processor，不能用客户端声称的值。</li>
           <li><code>segment_duration_s = 5.0</code> 定义模型侧低延迟切片大小；客户端 append 的 chunk 可以更小。</li>
@@ -530,17 +1971,100 @@ async_chunk=false:
 
     <section id="engine-streaming">
       <h2>3. engine streaming input：第一次 add request，后面 streaming update</h2>
-      <pre class="flow"><code>engine streaming input 的时间轴
-
-StreamingInput generator:
-  chunk0          chunk1              chunk2              end
-    |               |                   |                  |
-    v               v                   v                  v
-engine:
-  add_request  -> streaming_update -> streaming_update -> streaming_update(resumable=false)
-  resumable=true  resumable=true      resumable=true      final prompt [0]
-
-直观理解：这是同一条 request 的输入序列逐步变长，而不是多个独立请求。</code></pre>
+      <div class="debug-trace">
+        <p class="debug-title">断点视角：AsyncOmni 如何判断 add_request 还是 streaming_update</p>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">AsyncOmni</span>
+            <span class="method-badge">_add_streaming_input_request</span>
+            <strong>入口收到的不是一个 prompt，而是一个 async generator</strong>
+            <small>这个函数本身就是 engine 级 streaming input 的边界。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">input_stream</span>
+              <span class="shape">AsyncGenerator[StreamingInput]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">stage0_params</span>
+              <span class="shape">OmniSamplingParams</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">has_submitted_first_chunk</span>
+              <span class="shape warn">bool</span>
+              初始为 <code>False</code>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">req_state.input_stream_task</span>
+              <span class="shape">asyncio.Task</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ 每来一个 chunk 都重新提取 prompt_text，并替换 stage-0 sampling params ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">AsyncOmni</span>
+            <span class="method-badge">handle_inputs</span>
+            <strong>第一次 chunk 创建 request，后续 chunk 更新 request</strong>
+            <small>这不是多个请求，而是同一个 request 的输入不断续接。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">chunk.prompt</span>
+              <span class="shape">PromptType</span>
+              <span class="shape audio">audio segment?</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">prompt_text</span>
+              <span class="shape">str | None</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">first chunk</span>
+              <span class="shape warn">engine.add_request_async(..., resumable=True)</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">later chunk</span>
+              <span class="shape warn">engine.add_streaming_update_async(..., resumable=True)</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ generator 正常结束时补一个 final update ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">AsyncOmni</span>
+            <span class="method-badge">finally</span>
+            <strong>用 resumable=False 关闭 streaming request</strong>
+            <small>这个终止信号让 scheduler 不再等待更多输入。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">final_prompt</span>
+              <span class="shape">TokensPrompt(prompt_token_ids=[0])</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">resumable</span>
+              <span class="shape warn">False</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">engine streaming input 的时间轴</p>
+        <div class="timeline">
+          <span class="node-soft">chunk0</span>
+          <span class="arrow">→</span>
+          <span class="node-green">add_request<br><small>resumable=true</small></span>
+          <span class="arrow">→</span>
+          <span class="node-soft">chunk1</span>
+          <span class="arrow">→</span>
+          <span class="node-green">streaming_update<br><small>resumable=true</small></span>
+          <span class="arrow">→</span>
+          <span class="node-soft">end</span>
+          <span class="arrow">→</span>
+          <span class="node-warn">final update<br><small>resumable=false</small></span>
+        </div>
+        <p class="caption">直观理解：这是同一条 request 的输入序列逐步变长，而不是多个独立请求。</p>
+      </div>
 
       <div class="method">
         <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>AsyncOmni</code>，方法 <code>_add_streaming_input_request</code></p>
@@ -632,30 +2156,31 @@ engine:
     input_stream_task = asyncio.create_task(handle_inputs())
     req_state.input_stream_task = input_stream_task
     return input_stream_task</code></pre>
-        <pre class="flow"><code>几何图：has_submitted_first_chunk 是分叉开关
-
-              AsyncGenerator[StreamingInput]
-                         |
-                         v
-              +---------------------+
-              | for chunk in stream |
-              +---------------------+
-                         |
-              has_submitted_first_chunk?
-                  /                 \
-              false                 true
-                |                     |
-                v                     v
-         add_request             add_streaming_update
-         resumable=true          resumable=true
-                |                     |
-                +----------+----------+
-                           v
-                    generator ended
-                           |
-                           v
-                final TokensPrompt([0])
-                resumable=false</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">has_submitted_first_chunk 是分叉开关</p>
+          <div class="flowline">
+            <span class="node-soft">AsyncGenerator<br><small>StreamingInput</small></span>
+            <span class="arrow">→</span>
+            <span class="node">for chunk</span>
+            <span class="arrow">→</span>
+            <span class="node-warn">has first?</span>
+          </div>
+          <div class="diagram-grid cols-2" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">false</p>
+              <div class="flowline"><span class="node-green">add_request</span><span class="arrow">→</span><span class="node">resumable=true</span></div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">true</p>
+              <div class="flowline"><span class="node-green">add_streaming_update</span><span class="arrow">→</span><span class="node">resumable=true</span></div>
+            </div>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-soft">generator ended</span><span class="arrow">→</span>
+            <span class="node-warn">TokensPrompt([0])</span><span class="arrow">→</span>
+            <span class="node-warn">resumable=false</span>
+          </div>
+        </div>
         <ol class="explain">
           <li>这个方法只处理 engine 级 streaming input，因此入口参数是 <code>AsyncGenerator[StreamingInput]</code>。</li>
           <li>先校验 sampling params list，并只拿 Stage-0 的参数做 streaming 约束。</li>
@@ -756,25 +2281,30 @@ engine:
                 logger.exception("Failed to send response.audio.done")
         while not self.audio_queue.empty():
             self.audio_queue.get_nowait()</code></pre>
-        <pre class="flow"><code>几何图：同一个 engine output 被拆成两条 websocket 输出通道
-
-engine.generate(streaming_input_gen)
-          |
-          v
-OmniRequestOutput 序列
-          |
-          +--> stage_id == 0
-          |       token ids: [u0, u1, ...] -> input_stream queue
-          |       text delta: "..."        -> response.text/transcription delta
-          |
-          +--> multimodal_output audio
-                  waveform tail: [a0, a1, ... aK]
-                       |
-                       v
-                  去重后新增 chunk -> PCM16 base64 -> response.audio.delta
-
-最后:
-  TranscriptionDone + response.audio.done</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">同一个 engine output 被拆成两条 websocket 输出通道</p>
+          <div class="flowline">
+            <span class="node-soft">engine.generate</span><span class="arrow">→</span>
+            <span class="node-green">OmniRequestOutput</span>
+          </div>
+          <div class="diagram-grid cols-2" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">stage-0 text lane</p>
+              <div class="token-row"><span class="token">u0</span><span class="token">u1</span><span class="token">...</span></div>
+              <div class="flowline" style="margin-top: 8px;">
+                <span class="node">input_stream queue</span><span class="arrow">→</span><span class="node-warn">TranscriptionDelta</span>
+              </div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">audio lane</p>
+              <div class="timeline"><span class="segment audio">a0</span><span class="segment audio">a1</span><span class="segment audio">...</span><span class="segment audio">aK</span></div>
+              <div class="flowline" style="margin-top: 8px;">
+                <span class="node">dedupe</span><span class="arrow">→</span><span class="node">PCM16 b64</span><span class="arrow">→</span><span class="node-warn">response.audio.delta</span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">结束时发 `TranscriptionDone`，如果产生过音频再发 `response.audio.done`。</p>
+        </div>
         <ol class="explain">
           <li>方法开头生成 realtime request id，并清空音频去重 ref；每次 websocket generation 都要从空 ref 开始。</li>
           <li><code>coerce_param_message_types(..., is_streaming=True)</code> 把默认输出参数转成适合 streaming 的 delta 形式。</li>
@@ -793,26 +2323,94 @@ OmniRequestOutput 序列
     <section id="text">
       <h2>4. 文本输入与文本流式输出</h2>
       <p>Qwen3-Omni 的文本输入在当前代码里通常不是 engine streaming input。它要么来自普通 chat request 的 <code>messages</code>，要么来自 video websocket 的 <code>video.query.text</code>。流式主要发生在输出：chat SSE 或 video stream 的 <code>response.text.delta</code>。</p>
-      <pre class="flow"><code>文本输入的几何直观
-
-messages:
-  [system text] [user text] [assistant prefix]
-         |
-         v
-chat template 渲染成一条字符串
-         |
-         v
-token ids 一维序列:
-  [t0, t1, t2, t3, ... tn]
-         |
-         v
-embedding 矩阵:
-  token 0 -> [e00 e01 e02 ... e0d]
-  token 1 -> [e10 e11 e12 ... e1d]
-  ...
-  token n -> [en0 en1 en2 ... end]
-
-如果 stream=true，通常是输出 token/text delta 流，不是输入 token 逐块进入 engine。</code></pre>
+      <div class="debug-trace">
+        <p class="debug-title">断点视角：文本输入在哪里变成 token 和 embedding</p>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">OpenAI serving / Renderer</span>
+            <span class="method-badge">chat template</span>
+            <strong>messages 先被渲染成 prompt_text</strong>
+            <small>普通文本流式主要发生在输出侧；输入侧通常是一条完整 prompt。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">messages</span>
+              <span class="shape">list[dict]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">prompt_text</span>
+              <span class="shape">str</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ OmniInputPreprocessor 根据有没有 multi_modal_data 选择路径 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">OmniInputPreprocessor</span>
+            <span class="method-badge">_process_text</span>
+            <strong>纯文本 tokenize，多模态则交给 processor</strong>
+            <small>这里是文本和 audio/image/video 合流的地方。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">parsed_content["prompt"]</span>
+              <span class="shape">str</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">multi_modal_data</span>
+              <span class="shape">dict | None</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">prompt_token_ids</span>
+              <span class="shape">list[int]</span>
+              <span class="shape">[seq_len]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">inputs</span>
+              <span class="shape">OmniTokenInputs | MultiModalInput</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ model embedding 层把 token ids 变成矩阵 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">Qwen3 Thinker</span>
+            <span class="method-badge">embed_input_ids</span>
+            <strong>token 序列变成 `[seq_len, hidden]`</strong>
+            <small>如果没有多模态 placeholder，这里就是纯文本矩阵。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">input_ids</span>
+              <span class="shape">torch.Tensor[seq_len]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">inputs_embeds</span>
+              <span class="shape">torch.Tensor[seq_len, hidden]</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">文本输入的几何直观</p>
+        <div class="flowline">
+          <span class="node-soft">messages</span><span class="arrow">→</span>
+          <span class="node">chat template</span><span class="arrow">→</span>
+          <span class="node-green">token ids</span><span class="arrow">→</span>
+          <span class="node-green">embedding matrix</span>
+        </div>
+        <div class="token-row" style="margin-top: 10px;">
+          <span class="token">system</span><span class="token">user text</span><span class="token">assistant prefix</span>
+          <span class="arrow">→</span>
+          <span class="token">t0</span><span class="token">t1</span><span class="token">t2</span><span class="token">...</span><span class="token">tn</span>
+        </div>
+        <div class="matrix cols-5" style="margin-top: 10px;">
+          <span class="matrix-cell">e00</span><span class="matrix-cell">e01</span><span class="matrix-cell">e02</span><span class="matrix-cell">...</span><span class="matrix-cell">e0d</span>
+          <span class="matrix-cell">e10</span><span class="matrix-cell">e11</span><span class="matrix-cell">e12</span><span class="matrix-cell">...</span><span class="matrix-cell">e1d</span>
+          <span class="matrix-cell">en0</span><span class="matrix-cell">en1</span><span class="matrix-cell">en2</span><span class="matrix-cell">...</span><span class="matrix-cell">end</span>
+        </div>
+        <p class="caption">stream=true 时通常是输出 token/text delta 流，不是输入 token 逐块进入 engine。</p>
+      </div>
 
       <div class="method">
         <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>OmniInputPreprocessor</code>，方法 <code>_process_text</code></p>
@@ -871,28 +2469,32 @@ embedding 矩阵:
         inputs["cache_salt"] = cache_salt
 
     return inputs</code></pre>
-        <pre class="flow"><code>几何图：_process_text 是三路分叉
-
-parsed_content
-  {
-    prompt: "...",
-    multi_modal_data?: {...},
-    mm_processor_kwargs?: {...}
-  }
-          |
-          v
-  +-------------------------------+
-  | 是否有 multi_modal_data ?      |
-  +-------------------------------+
-     | yes                         | no
-     v                             v
-_process_multimodal         是否显式带 mm_processor_kwargs ?
-                                  | yes              | no
-                                  v                  v
-                           _process_multimodal   _tokenize_prompt
-
-输出统一补齐:
-  prompt_embeds / additional_information / cache_salt</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">_process_text 是三路分叉</p>
+          <div class="flowline">
+            <span class="node-soft">parsed_content<br><small>prompt / mm_data / kwargs</small></span>
+            <span class="arrow">→</span>
+            <span class="node-warn">has multi_modal_data?</span>
+          </div>
+          <div class="diagram-grid cols-3" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">yes</p>
+              <span class="node-green">_process_multimodal</span>
+            </div>
+            <div class="lane">
+              <p class="lane-title">no, has mm_processor_kwargs</p>
+              <span class="node-green">_process_multimodal</span>
+            </div>
+            <div class="lane">
+              <p class="lane-title">pure text</p>
+              <span class="node">_tokenize_prompt</span>
+            </div>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-soft">统一补字段</span><span class="arrow">→</span>
+            <span class="node">prompt_embeds</span><span class="node">additional_information</span><span class="node">cache_salt</span>
+          </div>
+        </div>
         <ol class="explain">
           <li>方法入口是已经 parse 好的 text prompt，核心字段是 <code>prompt</code>。</li>
           <li><code>mm_processor_kwargs</code> 即使为空也有意义：有些多模态模型需要通过 processor kwargs 触发 prompt scaffold。</li>
@@ -908,18 +2510,109 @@ _process_multimodal         是否显式带 mm_processor_kwargs ?
 
     <section id="video">
       <h2>5. 视频帧流 + 查询文本 + 可选音频</h2>
-      <pre class="flow"><code>video stream 总图：协议层流式，engine 层按 query 快照
-
-websocket 时间轴:
-  frame F0 -> frame F1 -> audio A0 -> frame F2 -> query("这是什么？") -> frame F3 -> query(...)
-
-session 内部 buffer:
-  frame_buffer: [F0][F1][F2]     query 时采样 -> [F0][F1][F2]
-  audio_buffer: [A0 bytes]       query 时复制 -> input_audio，然后清空
-  text:         "这是什么？"      query 时追加到 user content
-
-engine 看到的是一次普通多模态 chat request:
-  user content = [image][image][image][optional audio][text]</code></pre>
+      <div class="debug-trace">
+        <p class="debug-title">断点视角：video.frame 持续进 buffer，video.query 才形成一次 engine prompt</p>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">OmniStreamingVideoHandler</span>
+            <span class="method-badge">handle_session / video.frame</span>
+            <strong>每个视频帧只更新 session 状态</strong>
+            <small>这一步没有调用 engine，只是在维护滚动 frame buffer 和 PIL cache。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">frame_data</span>
+              <span class="shape video">base64 str</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">raw_bytes</span>
+              <span class="shape video">bytes</span>
+              <span class="shape">image encoded</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">frame_buffer</span>
+              <span class="shape video">list[str]</span>
+              <span class="shape">len ≤ config.max_frames</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">frame_pil_cache</span>
+              <span class="shape video">dict[b64, (PIL, uuid)]</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ audio.chunk 只追加 bytes；query 时才复制并清空 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">OmniStreamingVideoHandler</span>
+            <span class="method-badge">handle_session / audio.chunk</span>
+            <strong>音频在 video session 里是 query-scoped buffer</strong>
+            <small>这和 `/v1/realtime` audio_queue 不同，不是 engine streaming input。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">pcm_bytes</span>
+              <span class="shape audio">bytes</span>
+              <span class="shape warn">PCM16</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio_buffer</span>
+              <span class="shape audio">bytearray[num_bytes]</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ video.query 是真正的推理边界：复制 buffer 成快照 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">OmniStreamingVideoHandler</span>
+            <span class="method-badge">_build_messages</span>
+            <strong>把 frame/audio/text 拼成 OpenAI-style messages</strong>
+            <small>这里之后就走普通 chat request 管线。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">query_frames</span>
+              <span class="shape video">list[str]</span>
+              <span class="shape">sampled to num_frames</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">query_audio_buffer</span>
+              <span class="shape audio">bytearray</span>
+              <span class="shape audio">WAV base64</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">user_content</span>
+              <span class="shape video">image_pil/image_url blocks</span>
+              <span class="shape audio">input_audio?</span>
+              <span class="shape">text?</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">engine_prompt</span>
+              <span class="shape">one prompt per query</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">video stream 总图：协议层流式，engine 层按 query 快照</p>
+        <div class="timeline">
+          <span class="frame">F0</span><span class="frame">F1</span><span class="segment audio">A0</span><span class="frame">F2</span>
+          <span class="node-warn">query<br><small>这是什么？</small></span><span class="frame">F3</span><span class="node-warn">query</span>
+        </div>
+        <div class="diagram-grid cols-3" style="margin-top: 10px;">
+          <div class="lane">
+            <p class="lane-title">frame_buffer</p>
+            <div class="timeline"><span class="frame selected">F0</span><span class="frame selected">F1</span><span class="frame selected">F2</span></div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">audio_buffer</p>
+            <div class="timeline"><span class="byte">A0</span><span class="byte">bytes</span></div>
+          </div>
+          <div class="lane">
+            <p class="lane-title">user content</p>
+            <div class="content-row"><span class="node">image</span><span class="node">image</span><span class="node">audio?</span><span class="node">text</span></div>
+          </div>
+        </div>
+      </div>
 
       <div class="method">
         <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>StreamingVideoSessionConfig</code></p>
@@ -965,23 +2658,26 @@ engine 看到的是一次普通多模态 chat request:
         le=1.0,
         description="EVS similarity threshold (higher = keep more frames).",
     )</code></pre>
-        <pre class="flow"><code>几何图：config 是 session buffer 的边界条件
-
-frame_buffer 容量:
-  max_frames = 50
-  [F0][F1][F2] ... [F49]
-   ^
-   buffer 满后再来新帧，最左侧旧帧被 pop
-
-query 采样:
-  num_frames = 4
-  [F0][F1][F2][F3][F4]...[F49]
-    |       |       |       |
-    v       v       v       v
-  [S0]    [S1]    [S2]    [S3/latest]
-
-modalities = ["text", "audio"] 只控制输出通道:
-  response.text.delta + response.audio.delta</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">config 是 session buffer 的边界条件</p>
+          <div class="lane">
+            <p class="lane-title">max_frames 控制容量</p>
+            <div class="timeline">
+              <span class="frame">F0</span><span class="frame">F1</span><span class="frame">F2</span><span class="frame">...</span><span class="frame">F49</span>
+              <span class="arrow">+ F50 →</span><span class="frame selected">F1</span><span class="frame selected">...</span><span class="frame selected">F50</span>
+            </div>
+          </div>
+          <div class="lane" style="margin-top: 10px;">
+            <p class="lane-title">num_frames 控制 query 采样</p>
+            <div class="timeline">
+              <span class="frame selected">F0</span><span class="frame">F1</span><span class="frame selected">F2</span><span class="frame">F3</span><span class="frame selected">F4</span><span class="frame">...</span><span class="frame selected">latest</span>
+            </div>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-soft">modalities=["text","audio"]</span><span class="arrow">→</span>
+            <span class="node-warn">response.text.delta</span><span class="node-warn">response.audio.delta</span>
+          </div>
+        </div>
         <ol class="explain">
           <li>video stream 的第一条 websocket 消息必须是 <code>session.config</code>，这组字段就是它的 schema。</li>
           <li><code>modalities</code> 控制输出要 text、audio 还是两者都要；这不是输入模态。</li>
@@ -1099,29 +2795,39 @@ elif msg_type == "video.query":
                 active_request_id = None
 
     query_task = asyncio.create_task(_run_query())</code></pre>
-        <pre class="flow"><code>几何图：handle_session 维护两个滚动容器
-
-video.frame:
-  base64 image -> raw bytes -> frame_filter -> frame_buffer
-
-frame_buffer 环形效果:
-  before: [F10][F11][F12]...[F59]
-  new F60 arrives and max_frames reached
-  after:  [F11][F12]...[F59][F60]
-
-PIL cache:
-  F60 base64 -> md5 uuid -> decode PIL in background
-  cache[F60] = (PIL image, uuid)
-
-audio.chunk:
-  PCM bytes -> audio_buffer
-  [byte0 byte1 ... byteN]
-
-video.query:
-  query_frames = copy(frame_buffer)
-  query_audio_buffer = copy(audio_buffer)
-  audio_buffer.clear()
-  _process_query runs in background</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">handle_session 维护两个滚动容器</p>
+          <div class="diagram-grid cols-2">
+            <div class="lane">
+              <p class="lane-title">video.frame</p>
+              <div class="flowline">
+                <span class="node-soft">base64 image</span><span class="arrow">→</span>
+                <span class="node">raw bytes</span><span class="arrow">→</span>
+                <span class="node">frame_filter</span><span class="arrow">→</span>
+                <span class="node-green">frame_buffer</span>
+              </div>
+              <div class="timeline" style="margin-top: 8px;">
+                <span class="frame">F10</span><span class="frame">F11</span><span class="frame">...</span><span class="frame">F59</span><span class="arrow">+F60 →</span><span class="frame selected">F11</span><span class="frame selected">...</span><span class="frame selected">F60</span>
+              </div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">prewarm + audio</p>
+              <div class="flowline">
+                <span class="node-soft">F60 bytes</span><span class="arrow">→</span>
+                <span class="node">md5 uuid</span><span class="arrow">→</span>
+                <span class="node-green">PIL cache</span>
+              </div>
+              <div class="timeline" style="margin-top: 8px;">
+                <span class="byte">byte0</span><span class="byte">byte1</span><span class="byte">...</span><span class="byte">byteN</span><span class="arrow">→</span><span class="node-green">audio_buffer</span>
+              </div>
+            </div>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-warn">video.query</span><span class="arrow">→</span>
+            <span class="node">copy frame_buffer</span><span class="node">copy audio_buffer</span><span class="node-warn">clear audio_buffer</span><span class="arrow">→</span>
+            <span class="node-green">_process_query task</span>
+          </div>
+        </div>
         <ol class="explain">
           <li><code>video.frame</code> 事件只把帧放入 session buffer，不立刻触发 engine。</li>
           <li>帧数据必须是 base64 图片，超过大小限制或解码失败都会被拒绝。</li>
@@ -1208,27 +2914,26 @@ video.query:
     messages.append(user_message)
 
     return messages, user_message</code></pre>
-        <pre class="flow"><code>几何图：frame buffer 被采样成 OpenAI-style content blocks
-
-frame_buffer:
-  index:  0    1    2    3    4    5    6    7
-         [F0] [F1] [F2] [F3] [F4] [F5] [F6] [F7]
-
-num_frames = 4:
-  selected -> [F0] [F2] [F4] [F7]
-
-user_content:
-  [
-    {type: image_pil, uuid: md5(F0)},
-    {type: image_pil, uuid: md5(F2)},
-    {type: image_url, url: data:image/jpeg;base64,...},  fallback
-    {type: image_pil, uuid: md5(F7)},
-    {type: input_audio, data: wav_b64},                  optional
-    {type: text, text: query_text}                        optional
-  ]
-
-messages:
-  [system?] + recent text-only history + [current multimodal user message]</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">frame buffer 被采样成 OpenAI-style content blocks</p>
+          <div class="timeline">
+            <span class="frame selected">F0</span><span class="frame">F1</span><span class="frame selected">F2</span><span class="frame">F3</span>
+            <span class="frame selected">F4</span><span class="frame">F5</span><span class="frame">F6</span><span class="frame selected">F7</span>
+          </div>
+          <div class="content-row" style="margin-top: 10px;">
+            <span class="node">image_pil<br><small>uuid=md5(F0)</small></span>
+            <span class="node">image_pil<br><small>uuid=md5(F2)</small></span>
+            <span class="node-warn">image_url<br><small>fallback</small></span>
+            <span class="node">image_pil<br><small>uuid=md5(F7)</small></span>
+            <span class="node-green">input_audio?</span>
+            <span class="node-soft">text?</span>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-soft">system?</span><span class="arrow">+</span>
+            <span class="node">recent text-only history</span><span class="arrow">+</span>
+            <span class="node-green">current multimodal user message</span>
+          </div>
+        </div>
         <ol class="explain">
           <li>先按 <code>config.num_frames</code> 对 session frame buffer 做采样；不是每一帧都进模型。</li>
           <li>buffer 较长时，用 stride 采样，并强制保留最新一帧。</li>
@@ -1302,30 +3007,29 @@ async for output in result_gen:
             text_parts.append(delta_text)
             if streaming:
                 await websocket.send_json({"type": "response.text.delta", "delta": delta_text})</code></pre>
-        <pre class="flow"><code>几何图：一次 query 的输出被拆成 text lane 和 audio lane
-
-engine output 时间轴:
-  O0(text) -> O1(text) -> O2(audio) -> O3(audio) -> done
-
-text lane:
-  previous_text: "今"
-  current_text:  "今天"
-  delta:             "天"
-       |
-       v
-  response.text.delta
-
-audio lane:
-  cumulative waveform:
-    before drained: [a0 ... a99]
-    current output: [a0 ... a99][a100 ... a179]
-    new delta:                  [a100 ... a179]
-       |
-       v
-  wav/pcm base64 -> response.audio.delta
-
-如果发生 interrupt:
-  output 仍被 drain，但不再发 websocket delta。</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">一次 query 的输出被拆成 text lane 和 audio lane</p>
+          <div class="timeline">
+            <span class="node-soft">O0 text</span><span class="node-soft">O1 text</span><span class="node-green">O2 audio</span><span class="node-green">O3 audio</span><span class="node-warn">done</span>
+          </div>
+          <div class="diagram-grid cols-2" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">text lane</p>
+              <div class="flowline">
+                <span class="node">previous: 今</span><span class="arrow">→</span>
+                <span class="node">current: 今天</span><span class="arrow">→</span>
+                <span class="node-warn">delta: 天</span>
+              </div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">audio lane</p>
+              <div class="timeline">
+                <span class="segment audio">a0..a99</span><span class="segment audio">a100..a179</span><span class="arrow">→</span><span class="node-warn">new delta</span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">interrupt 后仍 drain engine output，但不再向 websocket 发 delta。</p>
+        </div>
         <ol class="explain">
           <li><code>engine_client.generate</code> 这里拿到的是一次 query 的 engine prompt，不是逐帧 streaming input。</li>
           <li><code>output_modalities=config.modalities</code> 决定输出 text、audio 或两者。</li>
@@ -1342,19 +3046,103 @@ audio lane:
 
     <section id="qwen3-mm">
       <h2>6. Qwen3-Omni 多模态处理器：audio / image / video 怎么进 Thinker</h2>
-      <pre class="flow"><code>Qwen3-Omni Thinker 输入的几何直观
-
-prompt token ids:
-  [text][image placeholder][text][audio placeholder][text][video placeholder]
-
-多模态特征:
-  image -> patch embedding 矩阵: [num_image_patches, hidden]
-  audio -> frame embedding 矩阵: [num_audio_frames, hidden]
-  video -> frame/patch embedding 矩阵: [num_video_tokens, hidden]
-
-最终输入 embedding:
-  [seq_len, hidden]
-  其中 placeholder 位置被对应模态 embedding 替换或展开合并。</code></pre>
+      <div class="debug-trace">
+        <p class="debug-title">断点视角：Qwen3-Omni Thinker 里多模态变量的 shape 怎么串起来</p>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">Qwen3OmniMoeThinkerMultiModalProcessor</span>
+            <span class="method-badge">_call_hf_processor</span>
+            <strong>把 mm_data 规范成 HF processor 期望的字段</strong>
+            <small>audio 会从 `audios` 改写为 `audio`，并补齐到 hop_length 的整数倍。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">mm_data["audio"]</span>
+              <span class="shape audio">list[np.ndarray[k * hop_length]]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">hf_inputs["audio_feature_lengths"]</span>
+              <span class="shape audio">torch.Tensor[n_audio]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">hf_inputs["feature_attention_mask"]</span>
+              <span class="shape audio">list[Tensor[num_frames]]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">mm_data image/video</span>
+              <span class="shape video">processor-specific BatchFeature</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ prompt placeholder 更新：决定多模态块插入 input_ids 的哪些位置 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">Qwen3OmniMoeThinkerMultiModalProcessor</span>
+            <span class="method-badge">_maybe_apply_prompt_updates</span>
+            <strong>处理普通 placeholder 与 audio-in-video placeholder</strong>
+            <small>debug 时看 `prompt_ids`、`mm_prompt_updates`、`mm_placeholders` 是否数量一致。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">prompt_ids</span>
+              <span class="shape">list[int]</span>
+              <span class="shape">[seq_len]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">mm_placeholders</span>
+              <span class="shape">dict[modality, positions]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">use_audio_in_video</span>
+              <span class="shape warn">bool</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">is_video / is_audio</span>
+              <span class="shape">BoolTensor[seq_len]</span>
+            </div>
+          </div>
+        </div>
+        <div class="debug-arrow-down">↓ embedding 阶段：先生成各模态块，再按 mask 合并进文本矩阵 ↓</div>
+        <div class="debug-step">
+          <div class="debug-meta">
+            <span class="class-badge">Qwen3OmniMoeThinkerForConditionalGeneration</span>
+            <span class="method-badge">embed_multimodal / embed_input_ids</span>
+            <strong>最终统一成 `[seq_len, hidden]` 输入矩阵</strong>
+            <small>多模态 embedding 的 tuple 顺序必须和 placeholder 顺序对齐。</small>
+          </div>
+          <div class="debug-vars">
+            <div class="debug-var">
+              <span class="var-name">multimodal_embeddings</span>
+              <span class="shape">tuple[Tensor]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">image/video block</span>
+              <span class="shape video">[num_visual_tokens, hidden]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">audio block</span>
+              <span class="shape audio">[num_audio_tokens, hidden]</span>
+            </div>
+            <div class="debug-var">
+              <span class="var-name">inputs_embeds</span>
+              <span class="shape">[seq_len, hidden]</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="diagram">
+        <p class="diagram-title">Qwen3-Omni Thinker 输入的几何直观</p>
+        <div class="token-row">
+          <span class="token">text</span><span class="token mm">image placeholder</span><span class="token">text</span>
+          <span class="token mm">audio placeholder</span><span class="token">text</span><span class="token mm">video placeholder</span>
+        </div>
+        <div class="diagram-grid cols-3" style="margin-top: 10px;">
+          <div class="lane"><p class="lane-title">image features</p><div class="matrix cols-4"><span class="matrix-cell mm">p0</span><span class="matrix-cell mm">p1</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span></div></div>
+          <div class="lane"><p class="lane-title">audio features</p><div class="matrix cols-4"><span class="matrix-cell mm">f0</span><span class="matrix-cell mm">f1</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span></div></div>
+          <div class="lane"><p class="lane-title">video features</p><div class="matrix cols-4"><span class="matrix-cell mm">v0</span><span class="matrix-cell mm">v1</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span></div></div>
+        </div>
+        <p class="caption">最终都是合并到 `[seq_len, hidden]` 的输入 embedding 矩阵里。</p>
+      </div>
 
       <div class="method">
         <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeThinkerMultiModalProcessor</code>，方法 <code>_call_hf_processor</code></p>
@@ -1434,26 +3222,31 @@ prompt token ids:
         hf_inputs["feature_attention_mask"] = [torch.ones(num_frame) for num_frame in audio_num_frames]
         hf_inputs["audio_feature_lengths"] = torch.tensor(audio_num_frames)
     return hf_inputs</code></pre>
-        <pre class="flow"><code>几何图：音频向量补齐到 hop_length 网格
-
-原始音频:
-  [x0 x1 x2 ... xL]
-
-hop_length = H
-如果 L 不能整除 H:
-  [x0 ... xL][0 0 0 ... 0]
-   |--------- padded length = k * H ---------|
-
-切成 feature frame:
-  frame 0: [x0 ... xH-1]
-  frame 1: [xH ... x2H-1]
-  ...
-  frame k: [...]
-
-feature_attention_mask:
-  [1, 1, 1, ..., 1]  长度 = audio_feature_lengths
-
-直观上，这是把一维 waveform 放到等宽时间格子里。</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">音频向量补齐到 hop_length 网格</p>
+          <div class="lane">
+            <p class="lane-title">raw waveform</p>
+            <div class="timeline">
+              <span class="segment audio">x0</span><span class="segment audio">x1</span><span class="segment audio">...</span><span class="segment audio">xL</span>
+              <span class="segment tail">pad 0</span><span class="segment tail">pad 0</span>
+            </div>
+          </div>
+          <div class="lane" style="margin-top: 10px;">
+            <p class="lane-title">hop_length = H 后的 feature frame</p>
+            <div class="timeline">
+              <span class="node-green">frame 0<br><small>x0..xH-1</small></span>
+              <span class="node-green">frame 1<br><small>xH..x2H-1</small></span>
+              <span class="node-green">...</span>
+              <span class="node-green">frame k</span>
+            </div>
+          </div>
+          <div class="token-row" style="margin-top: 10px;">
+            <span class="node-soft">feature_attention_mask</span>
+            <span class="mask-cell on">1</span><span class="mask-cell on">1</span><span class="mask-cell on">1</span><span class="mask-cell">...</span>
+            <span class="node">audio_feature_lengths</span>
+          </div>
+          <p class="caption">直观上，这是把一维 waveform 放到等宽时间格子里。</p>
+        </div>
         <ol class="explain">
           <li>方法收到 renderer/preprocessor 汇总后的 <code>prompt</code>、<code>mm_data</code>、<code>mm_kwargs</code>、tokenizer kwargs。</li>
           <li>先把 <code>audios</code> 从 <code>mm_data</code> 里弹出，因为 Qwen3-Omni HF processor 期望字段名是 <code>audio</code>。</li>
@@ -1529,25 +3322,30 @@ feature_attention_mask:
         )
 
     return prompt_ids, mm_placeholders</code></pre>
-        <pre class="flow"><code>几何图：placeholder updates 是在 token 序列上铺占位块
-
-普通模式:
-  prompt ids:
-    [text][AUDIO_PAD][text][VIDEO_PAD][text]
-              |                |
-              v                v
-    audio placeholder       video placeholder
-
-audio-in-video 模式:
-  prompt ids:
-    [text][VIDEO_PAD ... VIDEO_PAD][text]
-              |
-              v
-    video placeholder 区间内部推导 audio placeholder
-
-为什么要判断 use_audio_in_video:
-  如果 audio 已经嵌在 video token 区间里，就不能再额外插入一段独立 audio placeholder，
-  否则后面的 embedding merge 会把模态数量和位置对不上。</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">placeholder updates 是在 token 序列上铺占位块</p>
+          <div class="diagram-grid cols-2">
+            <div class="lane">
+              <p class="lane-title">普通模式</p>
+              <div class="token-row">
+                <span class="token">text</span><span class="token mm">AUDIO_PAD</span><span class="token">text</span><span class="token mm">VIDEO_PAD</span><span class="token">text</span>
+              </div>
+              <div class="flowline" style="margin-top: 8px;">
+                <span class="node-green">audio placeholder</span><span class="node-green">video placeholder</span>
+              </div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">audio-in-video 模式</p>
+              <div class="token-row">
+                <span class="token">text</span><span class="token mm">VIDEO_PAD</span><span class="token mm">VIDEO_PAD</span><span class="token mm">VIDEO_PAD</span><span class="token">text</span>
+              </div>
+              <div class="flowline" style="margin-top: 8px;">
+                <span class="node-green">video placeholder 区间</span><span class="arrow">→</span><span class="node-warn">推导 audio placeholder</span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">如果 audio 已经嵌在 video token 区间里，就不能再额外插入独立 audio placeholder，否则 embedding merge 的数量和位置会对不上。</p>
+        </div>
         <ol class="explain">
           <li>这个方法决定多模态 placeholder token 怎么写进 prompt ids，并且是 Qwen3-Omni 处理 video+audio 交织的关键。</li>
           <li>先统计每种模态 item 数量，然后校验 <code>mm_kwargs</code> 与 item 数是否匹配。</li>
@@ -1583,23 +3381,19 @@ audio-in-video 模式:
             audio_embeddings = self._process_audio_input(multimodal_input)
             multimodal_embeddings += tuple(audio_embeddings)
     return multimodal_embeddings</code></pre>
-        <pre class="flow"><code>几何图：各模态 embedding 被串成一个 tuple
-
-mm_input_by_modality:
-  image: [image0, image1]
-  video: [video0]
-  audio: [audio0]
-
-处理后:
-  image0 -> E_img0: [patches0, hidden]
-  image1 -> E_img1: [patches1, hidden]
-  video0 -> E_vid0: [video_tokens, hidden]
-  audio0 -> E_aud0: [audio_frames, hidden]
-
-multimodal_embeddings tuple:
-  (E_img0, E_img1, E_vid0, E_aud0)
-
-这个 tuple 后面会按 prompt 里的 placeholder 顺序被消费。</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">各模态 embedding 被串成一个 tuple</p>
+          <div class="diagram-grid cols-3">
+            <div class="lane"><p class="lane-title">image</p><div class="flowline"><span class="node-soft">image0</span><span class="arrow">→</span><span class="node-green">E_img0<br><small>[patches, hidden]</small></span></div></div>
+            <div class="lane"><p class="lane-title">video</p><div class="flowline"><span class="node-soft">video0</span><span class="arrow">→</span><span class="node-green">E_vid0<br><small>[video_tokens, hidden]</small></span></div></div>
+            <div class="lane"><p class="lane-title">audio</p><div class="flowline"><span class="node-soft">audio0</span><span class="arrow">→</span><span class="node-green">E_aud0<br><small>[audio_frames, hidden]</small></span></div></div>
+          </div>
+          <div class="flowline" style="margin-top: 10px;">
+            <span class="node-soft">multimodal_embeddings</span><span class="arrow">=</span>
+            <span class="node">E_img0</span><span class="node">E_img1</span><span class="node">E_vid0</span><span class="node">E_aud0</span>
+          </div>
+          <p class="caption">这个 tuple 后面会按 prompt 里的 placeholder 顺序被消费。</p>
+        </div>
         <ol class="explain">
           <li>先从 kwargs 里解析并校验多模态输入，得到按模态分组的结构。</li>
           <li>没有多模态输入时返回空 list，后面走纯文本 embedding。</li>
@@ -1646,35 +3440,34 @@ return super().embed_input_ids(
     multimodal_embeddings=multimodal_embeddings,
     is_multimodal=is_multimodal,
 )</code></pre>
-        <pre class="flow"><code>几何图：把文本 embedding 矩阵里的 placeholder 区域替换成多模态块
-
-input_ids:
-  [ t0 ][ t1 ][ VID ][ VID ][ AUD ][ AUD ][ t2 ]
-
-文本 embedding 初稿 inputs_embeds:
-  row0: embedding(t0)
-  row1: embedding(t1)
-  row2: embedding(VID placeholder)
-  row3: embedding(VID placeholder)
-  row4: embedding(AUD placeholder)
-  row5: embedding(AUD placeholder)
-  row6: embedding(t2)
-
-mask:
-  is_video: [0,0,1,1,0,0,0]
-  is_audio: [0,0,0,0,1,1,0]
-
-interleaved 模式合并后:
-  row0: text t0
-  row1: text t1
-  row2-row3: video embedding block
-  row4-row5: audio embedding block
-  row6: text t2
-
-张量形状直观:
-  inputs_embeds: [seq_len, hidden]
-  video block:   [num_video_tokens, hidden]
-  audio block:   [num_audio_tokens, hidden]</code></pre>
+        <div class="diagram">
+          <p class="diagram-title">把文本 embedding 矩阵里的 placeholder 区域替换成多模态块</p>
+          <div class="token-row">
+            <span class="token">t0</span><span class="token">t1</span><span class="token mm">VID</span><span class="token mm">VID</span><span class="token mm">AUD</span><span class="token mm">AUD</span><span class="token">t2</span>
+          </div>
+          <div class="diagram-grid cols-2" style="margin-top: 10px;">
+            <div class="lane">
+              <p class="lane-title">mask</p>
+              <div class="token-row">
+                <span class="node-soft">is_video</span><span class="mask-cell">0</span><span class="mask-cell">0</span><span class="mask-cell on">1</span><span class="mask-cell on">1</span><span class="mask-cell">0</span><span class="mask-cell">0</span><span class="mask-cell">0</span>
+              </div>
+              <div class="token-row" style="margin-top: 6px;">
+                <span class="node-soft">is_audio</span><span class="mask-cell">0</span><span class="mask-cell">0</span><span class="mask-cell">0</span><span class="mask-cell">0</span><span class="mask-cell on">1</span><span class="mask-cell on">1</span><span class="mask-cell">0</span>
+              </div>
+            </div>
+            <div class="lane">
+              <p class="lane-title">merged embedding rows</p>
+              <div class="matrix cols-4">
+                <span class="matrix-cell">t0</span><span class="matrix-cell">h</span><span class="matrix-cell">...</span><span class="matrix-cell">h</span>
+                <span class="matrix-cell">t1</span><span class="matrix-cell">h</span><span class="matrix-cell">...</span><span class="matrix-cell">h</span>
+                <span class="matrix-cell mm">video</span><span class="matrix-cell mm">block</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span>
+                <span class="matrix-cell mm">audio</span><span class="matrix-cell mm">block</span><span class="matrix-cell mm">...</span><span class="matrix-cell mm">h</span>
+                <span class="matrix-cell">t2</span><span class="matrix-cell">h</span><span class="matrix-cell">...</span><span class="matrix-cell">h</span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">形状直观：inputs_embeds 是 `[seq_len, hidden]`，video/audio block 分别是 `[num_*_tokens, hidden]`。</p>
+        </div>
         <ol class="explain">
           <li>先把所有 token ids 都用语言模型 embedding 层转成文本 embedding。</li>
           <li>没有多模态 embedding 时直接返回文本 embedding。</li>
@@ -1687,8 +3480,514 @@ interleaved 模式合并后:
       </div>
     </section>
 
+    <section id="single-request-debug" class="single-debug">
+      <h2>7. 单请求 debug walkthrough：4 帧视频 + 2 秒音频 + 一句 query</h2>
+      <p>这个例子走 <code>/v1/video/chat/stream</code>。它可以同时带视频帧、音频 chunk、文本 query，并且服务端会以 <code>response.text.delta</code> / <code>response.audio.delta</code> 流式返回。注意：这条路径的“输入流式”发生在 WebSocket 协议层；到 engine 时是一次 <code>engine.generate(one prompt)</code>。</p>
+
+      <div class="case-grid">
+        <div class="case-card">
+          <h3>本例固定输入</h3>
+          <table class="var-table">
+            <tr><th>变量</th><th>具体值</th></tr>
+            <tr><td><code>frames</code></td><td>4 张 JPEG，每张解码后按 <code>RGB 448x448</code> 讨论</td></tr>
+            <tr><td><code>audio</code></td><td>PCM16 mono 16 kHz，2 秒，<code>32000 samples</code>，<code>64000 bytes</code></td></tr>
+            <tr><td><code>query_text</code></td><td><code>"请描述视频里发生了什么，并结合音频判断说话人的情绪。"</code></td></tr>
+            <tr><td><code>modalities</code></td><td><code>["text", "audio"]</code>，开启文本和音频输出</td></tr>
+            <tr><td><code>num_frames</code></td><td><code>4</code>，这次 4 帧全部进入 query</td></tr>
+          </table>
+        </div>
+        <div class="case-card">
+          <h3>Qwen3-Omni 真实配置数字</h3>
+          <table class="var-table">
+            <tr><th>字段</th><th>值</th></tr>
+            <tr><td>thinker text hidden</td><td><code>2048</code></td></tr>
+            <tr><td>thinker vocab</td><td><code>152064</code></td></tr>
+            <tr><td>audio sampling_rate / hop_length</td><td><code>16000 / 160</code></td></tr>
+            <tr><td>vision patch / temporal_patch / merge</td><td><code>16 / 2 / 2</code></td></tr>
+            <tr><td>talker hidden / vocab</td><td><code>1024 / 3072</code></td></tr>
+            <tr><td>code2wav quantizers / codebook</td><td><code>16 / 2048</code></td></tr>
+          </table>
+        </div>
+      </div>
+      <p class="trace-note">形状说明：为了把每一步数字算清楚，本例固定讨论“4 帧解码后按 448×448 RGB 进入 processor”的情况；如果线上 processor 对图片做动态 resize，后面的 <code>video_grid_thw</code> 和 video token 数会按实际 resize 后尺寸变化。</p>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 0：客户端如何开启这条“流式”请求</h3>
+          <p>WebSocket endpoint 本身就是流式通道；输出流式由服务端构造 <code>ChatCompletionRequest(stream=True)</code>。客户端需要发 <code>session.config</code>，并把 <code>modalities</code> 设成包含 <code>audio</code>。</p>
+          <pre><code class="language-python">config = {
+    "type": "session.config",
+    "model": "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+    "modalities": ["text", "audio"],
+    "max_frames": 8,
+    "num_frames": 4,
+    "enable_frame_filter": False,
+    "use_audio_in_video": True,
+}
+await ws.send(json.dumps(config))</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>输入 / 输出几何</h4>
+          <div class="geom-row"><span class="geom-box text">JSON config</span><span class="geom-arrow">→</span><span class="geom-box warn">StreamingVideoSessionConfig</span></div>
+          <table class="var-table">
+            <tr><th>变量</th><th>shape/type</th></tr>
+            <tr><td><code>modalities</code></td><td><code>list[str] = ["text","audio"]</code></td></tr>
+            <tr><td><code>use_audio_in_video</code></td><td><code>bool = True</code></td></tr>
+          </table>
+          <p class="trace-note">这里的 <code>use_audio_in_video=True</code> 会在后面变成 <code>mm_processor_kwargs</code>，影响 placeholder 和 M-RoPE 排布。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 1：客户端连续发送帧、音频、query</h3>
+          <p>这段来自示例客户端的实际发送模式。视频帧和音频 chunk 只是先进入 session buffer；<code>video.query</code> 才触发一次推理。</p>
+          <pre><code class="language-python">for i, frame in enumerate(frames):
+    msg = {
+        "type": "video.frame",
+        "data": base64.b64encode(frame).decode(),
+    }
+    await ws.send(json.dumps(msg))
+
+chunk_size = 16000 * 2  # 1 second of 16 kHz 16-bit PCM
+for offset in range(0, len(audio_data), chunk_size):
+    chunk = audio_data[offset : offset + chunk_size]
+    msg = {
+        "type": "audio.chunk",
+        "data": base64.b64encode(chunk).decode(),
+    }
+    await ws.send(json.dumps(msg))
+
+await ws.send(json.dumps({"type": "video.query", "text": args.query}))</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>本例的具体数据</h4>
+          <div class="geom-row"><span class="geom-box video">F0<br>448x448x3</span><span class="geom-box video">F1</span><span class="geom-box video">F2</span><span class="geom-box video">F3</span></div>
+          <div class="geom-row"><span class="geom-box audio">A0<br>32000 bytes</span><span class="geom-box audio">A1<br>32000 bytes</span></div>
+          <div class="geom-row"><span class="geom-box text">query text</span></div>
+          <table class="var-table">
+            <tr><th>变量</th><th>shape/type</th></tr>
+            <tr><td><code>frame</code></td><td><code>bytes</code>，JPEG encoded</td></tr>
+            <tr><td><code>chunk</code></td><td><code>bytes[32000]</code>，1 秒 PCM16</td></tr>
+            <tr><td><code>audio_data</code></td><td><code>bytes[64000]</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 2：服务端接收 config，建立 session 状态</h3>
+          <p><code>_receive_config</code> 会把 JSON 变成 Pydantic config。随后 <code>handle_session</code> 初始化 frame/audio/history/query 状态。</p>
+          <pre><code class="language-python">config_data = {k: v for k, v in msg.items() if k != "type"}
+config = StreamingVideoSessionConfig(**config_data)
+
+frame_buffer: list[str] = []
+frame_pil_cache: dict[str, tuple[Any, str] | object] = {}
+audio_buffer = bytearray()  # raw PCM16 16kHz mono
+message_history: list[dict[str, Any]] = []
+msg_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(maxsize=_MAX_MSG_QUEUE)</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>session 内存布局</h4>
+          <div class="geom-row"><span class="geom-box video">frame_buffer<br>[]</span><span class="geom-box video">pil_cache<br>{}</span></div>
+          <div class="geom-row"><span class="geom-box audio">audio_buffer<br>bytearray()</span><span class="geom-box warn">msg_queue<br>max=200</span></div>
+          <p class="trace-note">语法点：<code>{k: v for ...}</code> 是 dict comprehension，用来去掉 <code>type</code> 字段。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓ video.frame 分支</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 3：每个 video.frame 解码、过滤、入 frame_buffer</h3>
+          <p>这一步发生 4 次。每次只更新 buffer，不触发 engine。</p>
+          <pre><code class="language-python">frame_data = msg.get("data", "")
+raw_bytes = base64.b64decode(frame_data, validate=True)
+
+if len(frame_buffer) &gt;= max_buf:
+    dropped = frame_buffer.pop(0)
+    frame_pil_cache.pop(dropped, None)
+frame_buffer.append(frame_data)
+
+mm_uuid = hashlib.md5(raw_bytes, usedforsecurity=False).hexdigest()
+pil = await asyncio.to_thread(_decode_frame_bytes, b)
+frame_pil_cache[b64] = (pil, u)</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>4 帧后的状态</h4>
+          <div class="geom-row"><span class="geom-box video">frame_buffer[0]<br>F0 b64</span><span class="geom-box video">F1</span><span class="geom-box video">F2</span><span class="geom-box video">F3</span></div>
+          <div class="geom-row"><span class="geom-box video">PIL RGB<br>[448,448,3]</span><span class="geom-arrow">→</span><span class="geom-box video">uuid=md5(bytes)</span></div>
+          <table class="var-table">
+            <tr><th>变量</th><th>shape/type</th></tr>
+            <tr><td><code>frame_buffer</code></td><td><code>list[str]</code>，长度 <code>4</code></td></tr>
+            <tr><td><code>frame_pil_cache</code></td><td><code>dict[b64, (PIL.Image RGB, uuid)]</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓ audio.chunk 分支</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 4：两个 audio.chunk 追加到 audio_buffer</h3>
+          <p>这一步也不触发 engine。两个 1 秒 chunk 合并成 2 秒 PCM16。</p>
+          <pre><code class="language-python">data_b64 = msg.get("data", "")
+pcm_bytes = base64.b64decode(data_b64)
+if len(audio_buffer) + len(pcm_bytes) &gt; _MAX_AUDIO_BUFFER_BYTES:
+    await self._send_error(websocket, "Audio buffer overflow")
+    audio_buffer.clear()
+    continue
+audio_buffer.extend(pcm_bytes)</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>音频几何</h4>
+          <div class="geom-row"><span class="geom-box audio">chunk0<br>32000 bytes</span><span class="geom-box audio">chunk1<br>32000 bytes</span><span class="geom-arrow">→</span><span class="geom-box audio">audio_buffer<br>64000 bytes</span></div>
+          <table class="var-table">
+            <tr><th>量</th><th>值</th></tr>
+            <tr><td>samples</td><td><code>64000 / 2 = 32000</code></td></tr>
+            <tr><td>seconds</td><td><code>32000 / 16000 = 2.0s</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓ video.query：真正的推理边界</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 5：query 时复制快照，然后清空 audio_buffer</h3>
+          <p>这几行是协议流和 engine 请求之间的分界。视频 frame 继续留在 session 里；音频按 query 消费。</p>
+          <pre><code class="language-python">request_id = f"video-{uuid.uuid4().hex[:12]}"
+active_request_id = request_id
+interrupt_event.clear()
+query_frames = list(frame_buffer)
+query_audio_buffer = bytearray(audio_buffer)
+audio_buffer.clear()
+query_prewarmed_frames = dict(frame_pil_cache)
+
+query_task = asyncio.create_task(_run_query())</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>快照前后</h4>
+          <div class="geom-row"><span class="geom-box video">frame_buffer<br>4 frames</span><span class="geom-arrow">→</span><span class="geom-box video">query_frames<br>4 frames</span></div>
+          <div class="geom-row"><span class="geom-box audio">audio_buffer<br>64000 bytes</span><span class="geom-arrow">→</span><span class="geom-box audio">query_audio_buffer<br>64000 bytes</span><span class="geom-arrow">+</span><span class="geom-box warn">audio_buffer<br>0 bytes</span></div>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 6：_build_messages 采样帧并构造 OpenAI-style content blocks</h3>
+          <p>本例 <code>n_buf=4</code> 且 <code>num_frames=4</code>，所以 4 帧全选。音频被包成 WAV base64，文本追加在最后。</p>
+          <pre><code class="language-python">n_buf = len(frame_buffer)
+if n_buf &lt;= config.num_frames:
+    frames = list(frame_buffer)
+
+for frame_b64 in frames:
+    cached = prewarmed.get(frame_b64)
+    if cached is not None:
+        pil, pil_uuid = cached
+        user_content.append({
+            "type": "image_pil",
+            "image_pil": pil,
+            "uuid": pil_uuid,
+        })
+
+wav_b64 = self._pcm_to_wav_b64(bytes(audio_buffer))
+user_content.append({
+    "type": "input_audio",
+    "input_audio": {"data": wav_b64, "format": "wav"},
+})
+user_content.append({"type": "text", "text": query_text})</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>content 几何</h4>
+          <div class="geom-row"><span class="geom-box video">image_pil × 4</span><span class="geom-box audio">input_audio × 1</span><span class="geom-box text">text × 1</span></div>
+          <table class="var-table">
+            <tr><th>变量</th><th>shape/type</th></tr>
+            <tr><td><code>frames</code></td><td><code>list[str]</code>，长度 <code>4</code></td></tr>
+            <tr><td><code>wav_b64</code></td><td>WAV bytes <code>64044</code>，base64 长度 <code>85392</code></td></tr>
+            <tr><td><code>messages</code></td><td><code>[system?, user]</code>，user content 长度 <code>6</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 7：服务端创建 ChatCompletionRequest，并显式打开 stream</h3>
+          <p>这里是输出流式开关：<code>"stream": True</code>。同时因为音频存在且 <code>use_audio_in_video=True</code>，会把这个开关传给 processor。</p>
+          <pre><code class="language-python">request_kwargs: dict[str, Any] = {
+    "model": config.model or "default",
+    "messages": messages,
+    "stream": True,
+    "modalities": config.modalities,
+    "add_generation_prompt": True,
+    "continue_final_message": False,
+    "add_special_tokens": False,
+}
+if config.use_audio_in_video and len(audio_buffer) &gt; 0:
+    request_kwargs["mm_processor_kwargs"] = {
+        "use_audio_in_video": True,
+    }
+
+chat_request = ChatCompletionRequest(**request_kwargs)</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>request 对象</h4>
+          <div class="geom-row"><span class="geom-box text">messages</span><span class="geom-arrow">+</span><span class="geom-box warn">stream=True</span><span class="geom-arrow">+</span><span class="geom-box audio">modalities</span></div>
+          <table class="var-table">
+            <tr><th>字段</th><th>值</th></tr>
+            <tr><td><code>stream</code></td><td><code>True</code></td></tr>
+            <tr><td><code>modalities</code></td><td><code>["text", "audio"]</code></td></tr>
+            <tr><td><code>mm_processor_kwargs</code></td><td><code>{"use_audio_in_video": True}</code></td></tr>
+          </table>
+          <p class="trace-note">语法点：<code>ChatCompletionRequest(**request_kwargs)</code> 是 Python kwargs 展开。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 8：_preprocess_to_engine_prompt 调 OpenAI chat handler 预处理</h3>
+          <p>这里把 OpenAI-style request 变成 vLLM engine 能接收的 prompt。返回的 <code>engine_prompts[0]</code> 后面会进入 <code>engine_client.generate</code>。</p>
+          <pre><code class="language-python">_conversation, engine_prompts = await handler._preprocess_chat(
+    request,
+    request.messages,
+    default_template=getattr(request, "chat_template", None) or handler.chat_template,
+    default_template_content_format=handler.chat_template_content_format,
+    renderer=renderer,
+    add_generation_prompt=request.add_generation_prompt,
+    continue_final_message=request.continue_final_message,
+    add_special_tokens=request.add_special_tokens,
+)
+return engine_prompts[0]</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>prompt 几何</h4>
+          <div class="geom-row"><span class="geom-box text">prompt ids<br>[S]</span><span class="geom-box video">video data<br>4 frames</span><span class="geom-box audio">audio data<br>2s WAV</span><span class="geom-arrow">→</span><span class="geom-box warn">engine_prompt</span></div>
+          <p class="trace-note">此时 <code>S</code> 是运行时 tokenizer + processor 产物；后面会被 audio/video placeholder 展开。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓ Qwen3-Omni processor / placeholder</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 9：音频帧数和视频 token 数的具体计算</h3>
+          <p>这一步由 HF processor + Qwen3-Omni processor 完成。下面是本例可以精确算出的部分。</p>
+          <pre><code class="language-python">hop_length = feature_extractor.hop_length
+audio_length = len(audio[0]) if isinstance(audio, tuple) else len(audio)
+num_frame = (
+    (audio_length // hop_length)
+    if audio_length % hop_length == 0
+    else (audio_length // hop_length - 1)
+)
+hf_inputs["feature_attention_mask"] = [torch.ones(num_frame)]
+hf_inputs["audio_feature_lengths"] = torch.tensor([num_frame])</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>本例 shape</h4>
+          <div class="geom-row"><span class="geom-box audio">audio<br>32000 samples</span><span class="geom-arrow">/ hop 160 →</span><span class="geom-box audio">feature length<br>200</span><span class="geom-arrow">→</span><span class="geom-box audio">audio tokens<br>26</span></div>
+          <div class="geom-row"><span class="geom-box video">4 frames<br>448×448</span><span class="geom-arrow">patch 16, tpatch 2 →</span><span class="geom-box video">grid_thw<br>[2,28,28]</span><span class="geom-arrow">merge 2×2 →</span><span class="geom-box video">video tokens<br>392</span></div>
+          <table class="var-table">
+            <tr><th>计算</th><th>结果</th></tr>
+            <tr><td><code>audio_feature_length</code></td><td><code>32000 / 160 = 200</code></td></tr>
+            <tr><td><code>_get_feat_extract_output_lengths(200)</code></td><td><code>26</code></td></tr>
+            <tr><td><code>video_grid_thw.prod() / merge_size²</code></td><td><code>2*28*28/4 = 392</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 10：use_audio_in_video 下，placeholder 会交织 video/audio token</h3>
+          <p>这段逻辑会生成一串更新 token。它让 audio token 按时间位置插入 video token 序列，而不是形成独立音频块。</p>
+          <pre><code class="language-python">video_token_indices = np.arange(curr_video_grid_thw[0]).reshape(-1, 1, 1)
+video_token_indices = np.broadcast_to(
+    video_token_indices, (video_token_indices.shape[0], height, width)
+).reshape(-1)
+video_token_indices = (
+    (video_token_indices + shift)
+    * next(iter([video_second_per_grid_t]))
+    * position_id_per_seconds
+)
+
+updates = [audio_start_token_id]
+while video_data_index &lt; len(video_token_indices) and audio_data_index &lt; len(audio_token_indices):
+    if video_token_indices[video_data_index] &lt;= audio_token_indices[audio_data_index]:
+        updates += [video_token_id]
+        video_data_index += 1
+    else:
+        updates += [audio_token_id]
+        audio_data_index += 1
+updates += [audio_end_token_id]</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>placeholder 几何</h4>
+          <div class="geom-row"><span class="geom-box warn">audio_start</span><span class="geom-box video">V</span><span class="geom-box video">V</span><span class="geom-box audio">A</span><span class="geom-box video">V...</span><span class="geom-box audio">A...</span><span class="geom-box warn">audio_end</span></div>
+          <table class="var-table">
+            <tr><th>变量</th><th>值</th></tr>
+            <tr><td><code>video_token_id</code></td><td><code>151656</code></td></tr>
+            <tr><td><code>audio_token_id</code></td><td><code>151675</code></td></tr>
+            <tr><td><code>audio_start/end</code></td><td><code>151669 / 151670</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 11：进入模型，先生成多模态 embedding，再 merge 到文本矩阵</h3>
+          <p>Thinker text hidden_size 是 2048，所以最终输入矩阵最后一维是 2048。</p>
+          <pre><code class="language-python">audio_embeddings = self._process_audio_input(multimodal_input)
+multimodal_embeddings += tuple(audio_embeddings)
+
+inputs_embeds = self._embed_text_input_ids(
+    input_ids,
+    self.language_model.embed_input_ids,
+    is_multimodal=is_multimodal,
+)
+
+is_video = is_mm_device &amp; (input_ids == video_token_id)
+is_audio = is_mm_device &amp; (input_ids == audio_token_id)
+return merge_interleaved_embeddings(
+    inputs_embeds,
+    multimodal_embeddings,
+    is_video,
+    is_audio,
+    is_mm_device,
+    num_video,
+    num_audio,
+)</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>矩阵几何</h4>
+          <div class="geom-row"><span class="geom-box text">text rows<br>[S_text, 2048]</span><span class="geom-box video">video block<br>[392, 2048]</span><span class="geom-box audio">audio block<br>[26, 2048]</span></div>
+          <div class="geom-row"><span class="geom-arrow">merge →</span><span class="geom-box warn">inputs_embeds<br>[S_final, 2048]</span></div>
+          <p class="trace-note"><code>S_final</code> 包含系统/用户/assistant 模板 token，加上 392 个 video placeholder 和 26 个 audio placeholder 的展开位置。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 12：engine.generate 以一次 prompt 运行，并按 output_modalities 返回</h3>
+          <p>这里是 video stream 路径和 realtime audio 路径的关键差异：本例不是 <code>add_streaming_update</code>，而是一次 <code>engine.generate(prompt=engine_prompt)</code>。</p>
+          <pre><code class="language-python">result_gen = self._engine_client.generate(
+    prompt=engine_prompt,
+    request_id=request_id,
+    output_modalities=config.modalities,
+)
+
+async for output in result_gen:
+    if not isinstance(output, OmniRequestOutput):
+        continue
+
+    out_type = getattr(output, "final_output_type", "text")</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>输出流分叉</h4>
+          <div class="geom-row"><span class="geom-box warn">OmniRequestOutput</span><span class="geom-arrow">→</span><span class="geom-box text">out_type=text</span><span class="geom-box audio">out_type=audio</span></div>
+          <table class="var-table">
+            <tr><th>变量</th><th>shape/type</th></tr>
+            <tr><td><code>result_gen</code></td><td><code>AsyncGenerator[OmniRequestOutput]</code></td></tr>
+            <tr><td><code>output_modalities</code></td><td><code>["text", "audio"]</code></td></tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 13：文本输出按累计字符串切 delta</h3>
+          <p><code>_extract_text_delta</code> 的直观含义：模型 output 里常是累计文本，server 只把新增后缀发给客户端。</p>
+          <pre><code class="language-python">delta_text, previous_text = self._extract_text_delta(
+    output,
+    previous_text,
+)
+if delta_text:
+    text_parts.append(delta_text)
+    if streaming:
+        await websocket.send_json({
+            "type": "response.text.delta",
+            "delta": delta_text,
+        })</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>delta 几何</h4>
+          <div class="geom-row"><span class="geom-box text">previous<br>"视频里"</span><span class="geom-arrow">→</span><span class="geom-box text">current<br>"视频里有人"</span><span class="geom-arrow">→</span><span class="geom-box text">delta<br>"有人"</span></div>
+          <p class="trace-note">客户端收到的是多个 <code>response.text.delta</code>，最后收到 <code>response.text.done</code>。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓ 右侧音频输出分支</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 14：音频输出只发送新增 waveform tail</h3>
+          <p>audio output 可能累积在 <code>multimodal_output["audio"]</code> 里。fast path 用 <code>audio_chunks_drained</code> 跳过已经发过的 chunk。</p>
+          <pre><code class="language-python">b64, audio_chunks_drained = self._extract_audio_delta_b64(
+    output,
+    audio_chunks_drained,
+)
+if b64:
+    await websocket.send_json({
+        "type": "response.audio.delta",
+        "data": b64,
+        "format": "wav",
+    })
+
+new_chunks = audio_data[chunks_drained:]
+tail = new_chunks[0] if len(new_chunks) == 1 else torch.cat(new_chunks, dim=-1)
+tail_np = cls._tensor_to_1d_np(tail)</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>音频 tail 几何</h4>
+          <div class="geom-row"><span class="geom-box audio">old chunks<br>drained=N</span><span class="geom-box audio">new chunk<br>tensor[..., T]</span><span class="geom-arrow">→</span><span class="geom-box audio">tail_np<br>[T]</span><span class="geom-arrow">→</span><span class="geom-box audio">WAV b64</span></div>
+          <p class="trace-note">Code2Wav 配置：<code>num_quantizers=16</code>，<code>codebook_size=2048</code>，最终输出 waveform 再封成 WAV/base64。</p>
+        </div>
+      </div>
+
+      <div class="trace-arrow">↓</div>
+
+      <div class="trace-node">
+        <div>
+          <h3>Node 15：收尾事件与历史消息</h3>
+          <p>文本完成后发 <code>response.text.done</code>；如果产生过音频，发 <code>response.audio.done</code>；最后把本轮 user/assistant 文本写进 history。</p>
+          <pre><code class="language-python">if not text_done_sent:
+    full_text = "".join(text_parts)
+    await websocket.send_json({"type": "response.text.done", "text": full_text})
+    text_done_sent = True
+
+if audio_chunk_count &gt; 0:
+    await websocket.send_json({"type": "response.audio.done"})
+
+response_text = "".join(text_parts)
+message_history.append(user_message)
+message_history.append({"role": "assistant", "content": response_text})</code></pre>
+        </div>
+        <div class="shape-panel">
+          <h4>最终返回</h4>
+          <div class="geom-row"><span class="geom-box text">text.done<br>full_text</span><span class="geom-box audio">audio.done</span><span class="geom-box warn">history +2</span></div>
+          <p class="trace-note">如果客户端随后发送 <code>video.done</code>，server 还会返回 <code>session.done</code>。</p>
+        </div>
+      </div>
+    </section>
+
     <section id="summary">
-      <h2>7. 读码结论</h2>
+      <h2>8. 读码结论</h2>
       <ul>
         <li><code>/v1/realtime</code> 的音频输入是真正的 engine streaming input：append 入队，commit 启动，Qwen3 按 5 秒 segment yield <code>StreamingInput</code>。</li>
         <li><code>AsyncOmni._add_streaming_input_request</code> 是 add request 与 streaming update 的分界点：第一片 <code>resumable=True</code> add，后续 <code>resumable=True</code> update，结束 <code>resumable=False</code> update。</li>
