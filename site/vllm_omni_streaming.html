@@ -302,6 +302,71 @@
 
     <section id="seq-input">
       <h2>4. 流式输入时序</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 1180 620" role="img" aria-label="streaming input sequence diagram">
+          <defs>
+            <marker id="seq-arrow-input" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#405166"></path>
+            </marker>
+            <style>
+              .seq-line { stroke: #9aa8ba; stroke-width: 1.1; stroke-dasharray: 5 5; }
+              .seq-arrow-i { stroke: #405166; stroke-width: 1.6; fill: none; marker-end: url(#seq-arrow-input); }
+              .seq-note { fill: #fff7eb; stroke: #b86413; stroke-width: 1.1; rx: 8; }
+            </style>
+          </defs>
+
+          <rect class="box box-blue" x="30" y="25" width="140" height="46"></rect>
+          <text x="100" y="54" text-anchor="middle" font-size="13" font-weight="700">Client</text>
+          <rect class="box box-green" x="205" y="25" width="170" height="46"></rect>
+          <text x="290" y="54" text-anchor="middle" font-size="13" font-weight="700">RealtimeConnection</text>
+          <rect class="box box-cyan" x="410" y="25" width="180" height="46"></rect>
+          <text x="500" y="54" text-anchor="middle" font-size="13" font-weight="700">transcribe_realtime</text>
+          <rect class="box box-violet" x="625" y="25" width="145" height="46"></rect>
+          <text x="697" y="54" text-anchor="middle" font-size="13" font-weight="700">AsyncOmni</text>
+          <rect class="box box-orange" x="805" y="25" width="150" height="46"></rect>
+          <text x="880" y="54" text-anchor="middle" font-size="13" font-weight="700">Orchestrator</text>
+          <rect class="box box-blue" x="990" y="25" width="160" height="46"></rect>
+          <text x="1070" y="54" text-anchor="middle" font-size="13" font-weight="700">Stage-0 Thinker</text>
+
+          <path class="seq-line" d="M100 71 V590"></path>
+          <path class="seq-line" d="M290 71 V590"></path>
+          <path class="seq-line" d="M500 71 V590"></path>
+          <path class="seq-line" d="M697 71 V590"></path>
+          <path class="seq-line" d="M880 71 V590"></path>
+          <path class="seq-line" d="M1070 71 V590"></path>
+
+          <path class="seq-arrow-i" d="M100 105 H290"></path>
+          <text x="195" y="96" text-anchor="middle" font-size="12">session.update(model)</text>
+          <path class="seq-arrow-i" d="M100 150 H290"></path>
+          <text x="195" y="141" text-anchor="middle" font-size="12">input_audio_buffer.append(audio_0)</text>
+          <rect class="seq-note" x="220" y="166" width="140" height="36"></rect>
+          <text x="290" y="188" text-anchor="middle" font-size="12">audio_queue.put()</text>
+
+          <path class="seq-arrow-i" d="M100 235 H290"></path>
+          <text x="195" y="226" text-anchor="middle" font-size="12">commit(final=false)</text>
+          <path class="seq-arrow-i" d="M290 280 H500"></path>
+          <text x="395" y="271" text-anchor="middle" font-size="12">audio_stream_generator()</text>
+          <path class="seq-arrow-i" d="M500 325 H697"></path>
+          <text x="598" y="316" text-anchor="middle" font-size="12">yield StreamingInput(slice 0)</text>
+
+          <path class="seq-arrow-i" d="M697 370 H880"></path>
+          <text x="788" y="361" text-anchor="middle" font-size="12">add_request(resumable=True)</text>
+          <path class="seq-arrow-i" d="M880 415 H1070"></path>
+          <text x="975" y="406" text-anchor="middle" font-size="12">submit_initial()</text>
+          <path class="seq-arrow-i" d="M1070 460 H290"></path>
+          <text x="680" y="451" text-anchor="middle" font-size="12">Stage-0 text delta + token_ids</text>
+          <rect class="seq-note" x="210" y="475" width="160" height="42"></rect>
+          <text x="290" y="493" text-anchor="middle" font-size="12">send TranscriptionDelta</text>
+          <text x="290" y="510" text-anchor="middle" font-size="12">input_stream.put(token_ids)</text>
+
+          <path class="seq-arrow-i" d="M100 545 H290"></path>
+          <text x="195" y="536" text-anchor="middle" font-size="12">append(audio_1...)</text>
+          <path class="seq-arrow-i" d="M500 565 H697"></path>
+          <text x="598" y="556" text-anchor="middle" font-size="12">yield StreamingInput(slice 1)</text>
+          <path class="seq-arrow-i" d="M697 585 H880"></path>
+          <text x="788" y="576" text-anchor="middle" font-size="12">streaming_update(resumable=True / final=False)</text>
+        </svg>
+      </div>
       <h3>4.1 websocket 到 engine</h3>
       <pre><code>Client
   | input_audio_buffer.append(audio_0)
@@ -338,6 +403,81 @@ AsyncOmni.generate(prompt=AsyncGenerator[StreamingInput])</code></pre>
 
     <section id="seq-async">
       <h2>5. async_chunk 时序</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 1180 670" role="img" aria-label="async chunk sequence diagram">
+          <defs>
+            <marker id="seq-arrow-async" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#405166"></path>
+            </marker>
+            <style>
+              .seq-line-a { stroke: #9aa8ba; stroke-width: 1.1; stroke-dasharray: 5 5; }
+              .seq-arrow-a { stroke: #405166; stroke-width: 1.6; fill: none; marker-end: url(#seq-arrow-async); }
+              .seq-bar { fill: #e8eef6; stroke: #7d8da3; stroke-width: 1; rx: 5; }
+              .seq-note-a { fill: #eef5ff; stroke: #2f6fda; stroke-width: 1.1; rx: 8; }
+              .seq-stop { fill: #fff0f0; stroke: #b43f4a; stroke-width: 1.1; rx: 8; }
+            </style>
+          </defs>
+
+          <rect class="box box-orange" x="35" y="25" width="150" height="46"></rect>
+          <text x="110" y="54" text-anchor="middle" font-size="13" font-weight="700">Orchestrator</text>
+          <rect class="box box-blue" x="235" y="25" width="155" height="46"></rect>
+          <text x="312" y="54" text-anchor="middle" font-size="13" font-weight="700">Stage-0 Thinker</text>
+          <rect class="box box-cyan" x="440" y="25" width="155" height="46"></rect>
+          <text x="517" y="54" text-anchor="middle" font-size="13" font-weight="700">Connector</text>
+          <rect class="box box-green" x="645" y="25" width="150" height="46"></rect>
+          <text x="720" y="54" text-anchor="middle" font-size="13" font-weight="700">Stage-1 Talker</text>
+          <rect class="box box-red" x="850" y="25" width="165" height="46"></rect>
+          <text x="932" y="54" text-anchor="middle" font-size="13" font-weight="700">Stage-2 Code2Wav</text>
+          <rect class="box box-violet" x="1050" y="25" width="110" height="46"></rect>
+          <text x="1105" y="54" text-anchor="middle" font-size="13" font-weight="700">Client</text>
+
+          <path class="seq-line-a" d="M110 71 V640"></path>
+          <path class="seq-line-a" d="M312 71 V640"></path>
+          <path class="seq-line-a" d="M517 71 V640"></path>
+          <path class="seq-line-a" d="M720 71 V640"></path>
+          <path class="seq-line-a" d="M932 71 V640"></path>
+          <path class="seq-line-a" d="M1105 71 V640"></path>
+
+          <path class="seq-arrow-a" d="M110 105 H312"></path>
+          <text x="211" y="96" text-anchor="middle" font-size="12">submit Stage-0 slice 0</text>
+          <path class="seq-arrow-a" d="M110 145 H720"></path>
+          <text x="415" y="136" text-anchor="middle" font-size="12">prewarm Stage-1 placeholder, resumable=True</text>
+          <path class="seq-arrow-a" d="M110 185 H932"></path>
+          <text x="521" y="176" text-anchor="middle" font-size="12">prewarm Stage-2 placeholder</text>
+
+          <rect class="seq-bar" x="300" y="220" width="24" height="70"></rect>
+          <text x="312" y="212" text-anchor="middle" font-size="12">execute</text>
+          <path class="seq-arrow-a" d="M312 245 H517"></path>
+          <text x="414" y="236" text-anchor="middle" font-size="12">put chunk 0: prefill hidden/embed</text>
+          <path class="seq-arrow-a" d="M720 285 H517"></path>
+          <text x="618" y="276" text-anchor="middle" font-size="12">poll get chunk</text>
+          <path class="seq-arrow-a" d="M517 325 H720"></path>
+          <text x="618" y="316" text-anchor="middle" font-size="12">additional_information + prompt slots</text>
+
+          <rect class="seq-bar" x="708" y="350" width="24" height="62"></rect>
+          <path class="seq-arrow-a" d="M720 375 H517"></path>
+          <text x="618" y="366" text-anchor="middle" font-size="12">put codec chunk</text>
+          <path class="seq-arrow-a" d="M932 415 H517"></path>
+          <text x="724" y="406" text-anchor="middle" font-size="12">poll get codec chunk</text>
+          <path class="seq-arrow-a" d="M517 455 H932"></path>
+          <text x="724" y="446" text-anchor="middle" font-size="12">codes.audio + left_context_size</text>
+
+          <rect class="seq-bar" x="920" y="480" width="24" height="54"></rect>
+          <path class="seq-arrow-a" d="M932 505 H1105"></path>
+          <text x="1018" y="496" text-anchor="middle" font-size="12">response.audio.delta</text>
+
+          <path class="seq-arrow-a" d="M312 550 H517"></path>
+          <text x="414" y="541" text-anchor="middle" font-size="12">put meta.is_segment_finished=True</text>
+          <rect class="seq-stop" x="620" y="565" width="200" height="42"></rect>
+          <text x="720" y="582" text-anchor="middle" font-size="12">Stage-1 stops polling this segment</text>
+          <text x="720" y="599" text-anchor="middle" font-size="12">request is not terminal</text>
+
+          <path class="seq-arrow-a" d="M110 630 H312"></path>
+          <text x="211" y="621" text-anchor="middle" font-size="12">streaming_update slice 1</text>
+          <rect class="seq-note-a" x="370" y="615" width="360" height="36"></rect>
+          <text x="550" y="638" text-anchor="middle" font-size="12">discard segment_finished_requests, resume connector polling</text>
+        </svg>
+      </div>
       <h3>5.1 不开 async_chunk：Orchestrator 显式转发</h3>
       <pre><code>Stage-0 Thinker segment done
   -> EngineCoreOutput(is_segment_finished=True)
