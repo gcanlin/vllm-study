@@ -688,6 +688,217 @@
       color: #9aa0ad;
       font-size: 13px;
     }
+    .stream-lab {
+      background: #0f1115;
+      color: #e6e8ee;
+      border-color: #262a35;
+    }
+    .stream-lab h2 {
+      color: #7aa2f7;
+    }
+    .stream-lab p {
+      color: #cfd4df;
+    }
+    .stream-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin: 12px 0;
+    }
+    .stream-controls button {
+      padding: 7px 12px;
+      border: 1px solid #3a4254;
+      border-radius: 6px;
+      background: #1c2030;
+      color: #e6e8ee;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .stream-controls button:hover {
+      border-color: #7aa2f7;
+      color: #ffffff;
+    }
+    .stream-controls label {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: #9aa0ad;
+      font-size: 13px;
+    }
+    .stream-stage {
+      display: grid;
+      grid-template-columns: 250px 1fr;
+      gap: 14px;
+      min-height: 540px;
+    }
+    .stream-step-list {
+      padding: 10px;
+      border: 1px solid #262a35;
+      border-radius: 8px;
+      background: #161922;
+    }
+    .stream-step-item {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px;
+      border-radius: 6px;
+      color: #9aa0ad;
+      font-size: 13px;
+    }
+    .stream-step-item.is-active {
+      background: #222632;
+      color: #ffffff;
+    }
+    .stream-step-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #3a4254;
+      flex: 0 0 auto;
+    }
+    .stream-step-item.is-active .stream-step-dot {
+      background: #7aa2f7;
+      box-shadow: 0 0 0 4px rgba(122, 162, 247, 0.16);
+    }
+    .stream-board {
+      position: relative;
+      min-width: 820px;
+      min-height: 540px;
+      overflow: hidden;
+      border: 1px solid #262a35;
+      border-radius: 10px;
+      background:
+        linear-gradient(90deg, rgba(122, 162, 247, 0.06) 0 25%, transparent 25% 100%),
+        linear-gradient(180deg, #10131a 0%, #0b0d12 100%);
+    }
+    .stream-lane-label {
+      position: absolute;
+      top: 12px;
+      color: #9aa0ad;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+    .stream-node {
+      position: absolute;
+      width: 164px;
+      min-height: 58px;
+      padding: 9px 10px;
+      border: 1px solid #3a4254;
+      border-radius: 8px;
+      background: #1c2030;
+      color: #e6e8ee;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.22);
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+    .stream-node strong {
+      display: block;
+      font-size: 13px;
+    }
+    .stream-node small {
+      display: block;
+      margin-top: 4px;
+      color: #9aa0ad;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .stream-node.is-active {
+      transform: translateY(-3px);
+      border-color: #7aa2f7;
+      background: #222632;
+      box-shadow: 0 0 0 3px rgba(122,162,247,0.18), 0 8px 18px rgba(0,0,0,0.32);
+    }
+    .stream-node.audio { border-color: #1c8065; }
+    .stream-node.video { border-color: #6d58c6; }
+    .stream-node.text { border-color: #2f6fda; }
+    .stream-node.warn { border-color: #b86413; }
+    .stream-packet {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      opacity: 0;
+      transform: translate(-50%, -50%);
+      transition: left 420ms ease, top 420ms ease, opacity 180ms ease, transform 180ms ease;
+      z-index: 3;
+    }
+    .stream-packet.video { background: #6d58c6; }
+    .stream-packet.audio { background: #1c8065; }
+    .stream-packet.text { background: #2f6fda; }
+    .stream-packet.warn { background: #b86413; }
+    .stream-packet.is-visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+    .stream-edge {
+      position: absolute;
+      height: 2px;
+      background: #3a4254;
+      transform-origin: left center;
+      opacity: 0.36;
+    }
+    .stream-edge.is-active {
+      opacity: 1;
+      background: #7aa2f7;
+      box-shadow: 0 0 8px rgba(122,162,247,0.35);
+    }
+    .stream-buffer {
+      position: absolute;
+      display: flex;
+      gap: 5px;
+      padding: 6px;
+      border: 1px solid #3a4254;
+      border-radius: 8px;
+      background: #0f1115;
+    }
+    .stream-cell {
+      width: 26px;
+      height: 24px;
+      border-radius: 4px;
+      border: 1px solid #3a4254;
+      background: #161922;
+      color: #9aa0ad;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .stream-cell.filled.video {
+      background: #1b1730;
+      border-color: #6d58c6;
+      color: #c9bfff;
+    }
+    .stream-cell.filled.audio {
+      background: #13231d;
+      border-color: #1c8065;
+      color: #b9f4da;
+    }
+    .stream-status {
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid #262a35;
+      border-radius: 8px;
+      background: #161922;
+    }
+    .stream-status h3 {
+      margin: 0 0 6px;
+      color: #e0af68;
+      font-size: 15px;
+    }
+    .stream-status p {
+      margin: 0;
+      color: #cfd4df;
+      font-size: 13px;
+    }
     @media (max-width: 860px) {
       header { padding: 24px 18px; }
       main { padding: 18px 12px 44px; }
@@ -712,6 +923,12 @@
       .trace-node {
         grid-template-columns: 1fr;
       }
+      .stream-stage {
+        grid-template-columns: 1fr;
+      }
+      .stream-board {
+        min-width: 760px;
+      }
     }
   </style>
 </head>
@@ -732,6 +949,7 @@
       <h2>目录</h2>
       <ol class="toc">
         <li><a href="#overview">三种输入先分清</a></li>
+        <li><a href="#streaming-animation">交互式 streaming 动画</a></li>
         <li><a href="#audio">音频 realtime streaming</a></li>
         <li><a href="#engine-streaming">engine streaming input</a></li>
         <li><a href="#text">文本输入与文本流式输出</a></li>
@@ -1561,8 +1779,74 @@
       <div class="note">所以，“音频 realtime”是 engine 层真正的 streaming input；“视频 stream”是协议层持续收集视频帧，query 时快照成一次多模态请求；“文本输入”目前主要是 request/query 边界的输入，文本 streaming 更多体现在输出 delta。</div>
     </section>
 
+    <section id="streaming-animation" class="stream-lab">
+      <h2>2. 交互式 streaming 动画</h2>
+      <p>这个动画用同一个 video stream 请求演示“协议层持续收集输入、query 时形成一次 engine prompt、输出侧按 delta 流式返回”的全过程。点击 Play 自动播放，也可以逐步 Next。</p>
+      <div class="stream-controls">
+        <button type="button" data-stream-action="play">Play</button>
+        <button type="button" data-stream-action="pause">Pause</button>
+        <button type="button" data-stream-action="next">Next</button>
+        <button type="button" data-stream-action="reset">Reset</button>
+        <label>Speed <input type="range" min="450" max="1800" step="150" value="900" data-stream-speed></label>
+      </div>
+      <div class="stream-stage">
+        <div class="stream-step-list" data-stream-steps></div>
+        <div>
+          <div class="stream-board" data-stream-board>
+            <div class="stream-lane-label" style="left: 34px;">Client</div>
+            <div class="stream-lane-label" style="left: 252px;">Server buffers</div>
+            <div class="stream-lane-label" style="left: 474px;">Engine</div>
+            <div class="stream-lane-label" style="left: 672px;">Qwen3-Omni</div>
+            <div class="stream-lane-label" style="left: 706px; top: 438px;">Output events</div>
+
+            <div class="stream-node video" data-stream-node="client" style="left: 34px; top: 58px;"><strong>WebSocket client</strong><small>send frame/audio/query</small></div>
+            <div class="stream-node video" data-stream-node="frames" style="left: 236px; top: 52px;"><strong>frame_buffer</strong><small>list[str], max_frames</small></div>
+            <div class="stream-buffer" style="left: 236px; top: 126px;">
+              <span class="stream-cell video" data-stream-cell="f0">F0</span>
+              <span class="stream-cell video" data-stream-cell="f1">F1</span>
+              <span class="stream-cell video" data-stream-cell="f2">F2</span>
+              <span class="stream-cell video" data-stream-cell="f3">F3</span>
+            </div>
+            <div class="stream-node audio" data-stream-node="audio" style="left: 236px; top: 184px;"><strong>audio_buffer</strong><small>bytearray[64000]</small></div>
+            <div class="stream-buffer" style="left: 236px; top: 258px;">
+              <span class="stream-cell audio" data-stream-cell="a0">A0</span>
+              <span class="stream-cell audio" data-stream-cell="a1">A1</span>
+            </div>
+            <div class="stream-node warn" data-stream-node="snapshot" style="left: 432px; top: 126px;"><strong>video.query snapshot</strong><small>copy frames + audio</small></div>
+            <div class="stream-node warn" data-stream-node="messages" style="left: 432px; top: 260px;"><strong>_build_messages()</strong><small>image_pil ×4 + audio + text</small></div>
+            <div class="stream-node warn" data-stream-node="engine" style="left: 432px; top: 390px;"><strong>engine.generate</strong><small>one prompt, stream output</small></div>
+            <div class="stream-node text" data-stream-node="processor" style="left: 640px; top: 104px;"><strong>processor</strong><small>placeholder + features</small></div>
+            <div class="stream-node text" data-stream-node="thinker" style="left: 640px; top: 218px;"><strong>Thinker</strong><small>inputs_embeds [S, 2048]</small></div>
+            <div class="stream-node audio" data-stream-node="talker" style="left: 640px; top: 332px;"><strong>Talker + Code2Wav</strong><small>audio tokens → waveform</small></div>
+            <div class="stream-node text" data-stream-node="textout" style="left: 706px; top: 468px;"><strong>response.text.delta</strong><small>delta_text: str</small></div>
+            <div class="stream-node audio" data-stream-node="audioout" style="left: 488px; top: 468px;"><strong>response.audio.delta</strong><small>WAV base64 tail</small></div>
+
+            <div class="stream-edge" data-stream-edge="client-frames" style="left: 198px; top: 88px; width: 38px;"></div>
+            <div class="stream-edge" data-stream-edge="client-audio" style="left: 198px; top: 220px; width: 38px;"></div>
+            <div class="stream-edge" data-stream-edge="buffers-snapshot" style="left: 400px; top: 158px; width: 32px;"></div>
+            <div class="stream-edge" data-stream-edge="snapshot-messages" style="left: 514px; top: 190px; width: 2px; height: 70px;"></div>
+            <div class="stream-edge" data-stream-edge="messages-engine" style="left: 514px; top: 324px; width: 2px; height: 66px;"></div>
+            <div class="stream-edge" data-stream-edge="engine-processor" style="left: 596px; top: 420px; width: 88px; transform: rotate(-68deg);"></div>
+            <div class="stream-edge" data-stream-edge="processor-thinker" style="left: 722px; top: 178px; width: 2px; height: 40px;"></div>
+            <div class="stream-edge" data-stream-edge="thinker-talker" style="left: 722px; top: 292px; width: 2px; height: 40px;"></div>
+            <div class="stream-edge" data-stream-edge="thinker-text" style="left: 774px; top: 284px; width: 160px; transform: rotate(61deg);"></div>
+            <div class="stream-edge" data-stream-edge="talker-audio" style="left: 632px; top: 422px; width: 132px; transform: rotate(136deg);"></div>
+
+            <div class="stream-packet video" data-stream-packet="video">F</div>
+            <div class="stream-packet audio" data-stream-packet="audio">A</div>
+            <div class="stream-packet warn" data-stream-packet="query">Q</div>
+            <div class="stream-packet text" data-stream-packet="text">T</div>
+          </div>
+          <div class="stream-status">
+            <h3 data-stream-title>准备开始</h3>
+            <p data-stream-desc>点击 Play，观察 frame/audio/query 如何进入不同 buffer，以及输出 delta 如何返回。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="audio">
-      <h2>2. 音频 realtime streaming</h2>
+      <h2>3. 音频 realtime streaming</h2>
       <div class="debug-trace">
         <p class="debug-title">断点视角：音频 chunk 如何一路变成 StreamingInput</p>
         <div class="debug-step">
@@ -1970,7 +2254,7 @@ async def buffer_realtime_audio(
     </section>
 
     <section id="engine-streaming">
-      <h2>3. engine streaming input：第一次 add request，后面 streaming update</h2>
+      <h2>4. engine streaming input：第一次 add request，后面 streaming update</h2>
       <div class="debug-trace">
         <p class="debug-title">断点视角：AsyncOmni 如何判断 add_request 还是 streaming_update</p>
         <div class="debug-step">
@@ -2321,7 +2605,7 @@ async def buffer_realtime_audio(
     </section>
 
     <section id="text">
-      <h2>4. 文本输入与文本流式输出</h2>
+      <h2>5. 文本输入与文本流式输出</h2>
       <p>Qwen3-Omni 的文本输入在当前代码里通常不是 engine streaming input。它要么来自普通 chat request 的 <code>messages</code>，要么来自 video websocket 的 <code>video.query.text</code>。流式主要发生在输出：chat SSE 或 video stream 的 <code>response.text.delta</code>。</p>
       <div class="debug-trace">
         <p class="debug-title">断点视角：文本输入在哪里变成 token 和 embedding</p>
@@ -2509,7 +2793,7 @@ async def buffer_realtime_audio(
     </section>
 
     <section id="video">
-      <h2>5. 视频帧流 + 查询文本 + 可选音频</h2>
+      <h2>6. 视频帧流 + 查询文本 + 可选音频</h2>
       <div class="debug-trace">
         <p class="debug-title">断点视角：video.frame 持续进 buffer，video.query 才形成一次 engine prompt</p>
         <div class="debug-step">
@@ -3045,7 +3329,7 @@ async for output in result_gen:
     </section>
 
     <section id="qwen3-mm">
-      <h2>6. Qwen3-Omni 多模态处理器：audio / image / video 怎么进 Thinker</h2>
+      <h2>7. Qwen3-Omni 多模态处理器：audio / image / video 怎么进 Thinker</h2>
       <div class="debug-trace">
         <p class="debug-title">断点视角：Qwen3-Omni Thinker 里多模态变量的 shape 怎么串起来</p>
         <div class="debug-step">
@@ -3481,7 +3765,7 @@ return super().embed_input_ids(
     </section>
 
     <section id="single-request-debug" class="single-debug">
-      <h2>7. 单请求 debug walkthrough：4 帧视频 + 2 秒音频 + 一句 query</h2>
+      <h2>8. 单请求 debug walkthrough：4 帧视频 + 2 秒音频 + 一句 query</h2>
       <p>这个例子走 <code>/v1/video/chat/stream</code>。它可以同时带视频帧、音频 chunk、文本 query，并且服务端会以 <code>response.text.delta</code> / <code>response.audio.delta</code> 流式返回。注意：这条路径的“输入流式”发生在 WebSocket 协议层；到 engine 时是一次 <code>engine.generate(one prompt)</code>。</p>
 
       <div class="case-grid">
@@ -3987,7 +4271,7 @@ message_history.append({"role": "assistant", "content": response_text})</code></
     </section>
 
     <section id="summary">
-      <h2>8. 读码结论</h2>
+      <h2>9. 读码结论</h2>
       <ul>
         <li><code>/v1/realtime</code> 的音频输入是真正的 engine streaming input：append 入队，commit 启动，Qwen3 按 5 秒 segment yield <code>StreamingInput</code>。</li>
         <li><code>AsyncOmni._add_streaming_input_request</code> 是 add request 与 streaming update 的分界点：第一片 <code>resumable=True</code> add，后续 <code>resumable=True</code> update，结束 <code>resumable=False</code> update。</li>
@@ -3999,5 +4283,226 @@ message_history.append({"role": "assistant", "content": response_text})</code></
   </main>
 
   <script src="./nav.js"></script>
+  <script>
+    (function () {
+      const root = document.querySelector("#streaming-animation");
+      if (!root) return;
+
+      const steps = [
+        {
+          title: "1. 发送 video.frame",
+          desc: "客户端连续发送 4 个 base64 JPEG frame；服务端只把它们放进 frame_buffer，还没有 engine request。",
+          packet: "video",
+          xy: [150, 88],
+          nodes: ["client", "frames"],
+          cells: ["f0", "f1", "f2", "f3"],
+          edges: ["client-frames"],
+        },
+        {
+          title: "2. 发送 audio.chunk",
+          desc: "两个 1 秒 PCM16 chunk 追加进 audio_buffer，合计 64000 bytes；这仍然只是 session buffer。",
+          packet: "audio",
+          xy: [150, 220],
+          nodes: ["client", "audio"],
+          cells: ["a0", "a1"],
+          edges: ["client-audio"],
+        },
+        {
+          title: "3. video.query 触发快照",
+          desc: "query 到来后，服务端复制 frame_buffer 和 audio_buffer；音频 buffer 随后清空，形成 query-scoped 输入。",
+          packet: "query",
+          xy: [432, 158],
+          nodes: ["snapshot", "frames", "audio"],
+          edges: ["buffers-snapshot"],
+        },
+        {
+          title: "4. _build_messages()",
+          desc: "4 张 image_pil、1 段 input_audio WAV、1 段 query text 被拼成 OpenAI-style user content。",
+          packet: "query",
+          xy: [514, 288],
+          nodes: ["snapshot", "messages"],
+          edges: ["snapshot-messages"],
+        },
+        {
+          title: "5. engine.generate(one prompt)",
+          desc: "video stream 路径在这里不是 engine-level streaming input；它以一次 engine_prompt 进入 engine，输出侧开始流式。",
+          packet: "query",
+          xy: [514, 420],
+          nodes: ["messages", "engine"],
+          edges: ["messages-engine"],
+        },
+        {
+          title: "6. processor 展开 placeholder",
+          desc: "processor 计算 audio/video feature，展开 placeholder，并把多模态数据准备成模型输入。",
+          packet: "query",
+          xy: [682, 132],
+          nodes: ["engine", "processor"],
+          edges: ["engine-processor"],
+        },
+        {
+          title: "7. Thinker 合并 embedding",
+          desc: "文本 token embedding 与 video/audio blocks 合并成 inputs_embeds；本例 thinker hidden_size 为 2048。",
+          packet: "text",
+          xy: [722, 248],
+          nodes: ["processor", "thinker"],
+          edges: ["processor-thinker"],
+        },
+        {
+          title: "8. 文本 delta 返回",
+          desc: "Thinker stage-0 产生累计文本，server 用 previous_text 切出 delta，发送 response.text.delta。",
+          packet: "text",
+          xy: [806, 500],
+          nodes: ["thinker", "textout"],
+          edges: ["thinker-text"],
+        },
+        {
+          title: "9. Talker + Code2Wav 生成音频",
+          desc: "Talker 把文本/隐藏状态转成 audio codec tokens，Code2Wav 解码为 waveform。",
+          packet: "audio",
+          xy: [722, 362],
+          nodes: ["thinker", "talker"],
+          edges: ["thinker-talker"],
+        },
+        {
+          title: "10. 音频 delta 返回",
+          desc: "server 只取新增 waveform tail，封成 WAV base64，发送 response.audio.delta。",
+          packet: "audio",
+          xy: [570, 500],
+          nodes: ["talker", "audioout"],
+          edges: ["talker-audio"],
+        },
+      ];
+
+      const list = root.querySelector("[data-stream-steps]");
+      const title = root.querySelector("[data-stream-title]");
+      const desc = root.querySelector("[data-stream-desc]");
+      const speed = root.querySelector("[data-stream-speed]");
+      const packets = new Map(
+        Array.from(root.querySelectorAll("[data-stream-packet]")).map((el) => [
+          el.dataset.streamPacket,
+          el,
+        ])
+      );
+      const nodes = new Map(
+        Array.from(root.querySelectorAll("[data-stream-node]")).map((el) => [
+          el.dataset.streamNode,
+          el,
+        ])
+      );
+      const edges = new Map(
+        Array.from(root.querySelectorAll("[data-stream-edge]")).map((el) => [
+          el.dataset.streamEdge,
+          el,
+        ])
+      );
+      const cells = new Map(
+        Array.from(root.querySelectorAll("[data-stream-cell]")).map((el) => [
+          el.dataset.streamCell,
+          el,
+        ])
+      );
+
+      let index = -1;
+      let timer = null;
+
+      function renderList() {
+        list.replaceChildren();
+        steps.forEach((step, i) => {
+          const item = document.createElement("div");
+          item.className = "stream-step-item";
+          item.dataset.index = String(i);
+          item.innerHTML =
+            '<span class="stream-step-dot"></span><span>' +
+            step.title +
+            "</span>";
+          item.addEventListener("click", () => {
+            pause();
+            show(i);
+          });
+          list.appendChild(item);
+        });
+      }
+
+      function clearHighlights() {
+        root.querySelectorAll(".is-active").forEach((el) =>
+          el.classList.remove("is-active")
+        );
+        root.querySelectorAll(".stream-packet").forEach((el) =>
+          el.classList.remove("is-visible")
+        );
+      }
+
+      function show(i) {
+        index = (i + steps.length) % steps.length;
+        const step = steps[index];
+        clearHighlights();
+        title.textContent = step.title;
+        desc.textContent = step.desc;
+
+        const item = list.querySelector('[data-index="' + index + '"]');
+        if (item) item.classList.add("is-active");
+
+        for (const name of step.nodes || []) {
+          const node = nodes.get(name);
+          if (node) node.classList.add("is-active");
+        }
+        for (const name of step.edges || []) {
+          const edge = edges.get(name);
+          if (edge) edge.classList.add("is-active");
+        }
+        for (const name of step.cells || []) {
+          const cell = cells.get(name);
+          if (cell) cell.classList.add("filled");
+        }
+
+        const packet = packets.get(step.packet);
+        if (packet) {
+          packet.style.left = step.xy[0] + "px";
+          packet.style.top = step.xy[1] + "px";
+          packet.classList.add("is-visible");
+        }
+      }
+
+      function next() {
+        show(index + 1);
+      }
+
+      function pause() {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      }
+
+      function play() {
+        pause();
+        if (index < 0) show(0);
+        timer = setInterval(next, Number(speed.value || 900));
+      }
+
+      function reset() {
+        pause();
+        index = -1;
+        clearHighlights();
+        cells.forEach((cell) => cell.classList.remove("filled"));
+        title.textContent = "准备开始";
+        desc.textContent = "点击 Play，观察 frame/audio/query 如何进入不同 buffer，以及输出 delta 如何返回。";
+      }
+
+      root.querySelector('[data-stream-action="play"]').addEventListener("click", play);
+      root.querySelector('[data-stream-action="pause"]').addEventListener("click", pause);
+      root.querySelector('[data-stream-action="next"]').addEventListener("click", () => {
+        pause();
+        next();
+      });
+      root.querySelector('[data-stream-action="reset"]').addEventListener("click", reset);
+      speed.addEventListener("input", () => {
+        if (timer) play();
+      });
+
+      renderList();
+      show(0);
+    })();
+  </script>
 </body>
 </html>
