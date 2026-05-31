@@ -215,6 +215,19 @@
           <td>帧被转成 <code>image_pil</code> 或 <code>image_url</code> content block；Qwen3-Omni processor 把它当 image/video 视觉 token 处理。</td>
         </tr>
       </table>
+      <pre class="flow"><code>三种输入的几何直观
+
+  audio realtime:
+    时间轴 waveform
+    [chunk0][chunk1][chunk2][chunk3]... -> queue -> [5s segment] [5s segment] [tail]
+
+  text:
+    一条 token 序列
+    [system][user text][assistant prefix] -> token ids -> embedding matrix
+
+  video stream:
+    session frame buffer
+    [F0][F1][F2][F3][F4]...[Fn] --query--> sample [F0][F2][F4][Fn] + text + optional audio</code></pre>
       <pre class="flow"><code>/v1/realtime audio
   websocket audio append -> audio_queue -> buffer_realtime_audio()
   -> AsyncGenerator[StreamingInput] -> AsyncOmni add_request / streaming_update
@@ -233,6 +246,19 @@
 
     <section id="audio">
       <h2>2. 音频 realtime streaming</h2>
+      <pre class="flow"><code>音频 realtime 总图
+
+客户端 websocket
+  append(base64 pcm16)  append(base64 pcm16)  commit(final=false)  append(...)  commit(final=true)
+        |                     |                    |                  |               |
+        v                     v                    v                  v               v
+audio_queue:   [float32 chunk] [float32 chunk]  start task      [float32 chunk]     [None]
+                                        |
+                                        v
+Qwen3ASRRealtimeBuffer:  [连续 waveform 时间轴] -> [segment 0] -> [segment 1] -> [tail]
+                                        |
+                                        v
+AsyncOmni:  add_request(segment 0) -> streaming_update(segment 1) -> final_update</code></pre>
 
       <div class="method">
         <p class="method-title"><span class="tag">上游 vLLM</span> 类 <code>RealtimeConnection</code>，方法 <code>handle_event</code></p>
@@ -299,6 +325,25 @@
             await self.start_generation()
     else:
         await self.send_error(f"Unknown event type: {event_type}", "unknown_event")</code></pre>
+        <pre class="flow"><code>几何图：append 只改变输入队列，commit 才改变推理状态
+
+base64 字符串
+  "AAECAw..."
+      |
+      v  b64decode
+PCM16 bytes
+  [b0 b1][b2 b3][b4 b5]...
+      |
+      v  np.frombuffer(int16) / 32768
+float32 waveform 向量
+  [x0, x1, x2, x3, ... xT]
+      |
+      v
+audio_queue
+  head -> [chunk A] -> [chunk B] -> ... -> tail
+
+commit(final=false):  启动 generation task
+commit(final=true):   入队 [None]，表示 waveform 时间轴结束</code></pre>
         <ol class="explain">
           <li>方法先取 <code>event["type"]</code>，整个 realtime 输入协议就是靠这个字段分发。</li>
           <li><code>session.update</code> 只做模型校验。没有通过这个事件，后面的 <code>commit</code> 不会启动生成。</li>
@@ -329,6 +374,22 @@
     self.generation_task = asyncio.create_task(
         self._run_generation(streaming_input_gen, input_stream)
     )</code></pre>
+        <pre class="flow"><code>几何图：两个方向的异步通道
+
+音频方向：客户端 -> audio_queue -> audio_stream_generator -> transcribe_realtime -> StreamingInput
+
+文本上下文方向：engine stage-0 output token ids -> input_stream queue
+
+             +------------------------+
+audio_queue  | audio_stream_generator |----> audio ndarray stream
+             +------------------------+
+                                                   |
+                                                   v
+             +------------------------+     +----------------------+
+input_stream | Queue[list[int]]       |<----| _run_generation      |
+             +------------------------+     +----------------------+
+
+start_generation 只是把这两个通道接好，然后启动后台 task。</code></pre>
         <ol class="explain">
           <li>已有 generation task 未结束时，重复 commit 会被忽略，避免同一个 websocket connection 同时跑两条 engine request。</li>
           <li><code>audio_stream_generator()</code> 把 <code>audio_queue</code> 包装成 async generator；它遇到 <code>None</code> sentinel 会停止。</li>
@@ -361,6 +422,25 @@
         (engine_input,) = await renderer.render_cmpl_async([parsed_prompt])
 
         yield StreamingInput(prompt=engine_input)</code></pre>
+        <pre class="flow"><code>几何图：模型专属 prompt -> 通用 engine input
+
+audio ndarray stream + input_stream
+          |
+          v
+model_cls.buffer_realtime_audio
+          |
+          v
+PromptType
+  TokensPrompt {
+    prompt_token_ids: [t0, t1, ..., tn]
+    multi_modal_data: { audio: [x0, x1, ..., xT] }
+  }
+          |
+          v
+parse_model_prompt + renderer
+          |
+          v
+StreamingInput(prompt=engine_input)</code></pre>
         <ol class="explain">
           <li>这个方法不懂 Qwen3-Omni 的切片策略，只负责把模型类产出的 prompt 渲染成 engine input。</li>
           <li><code>self.model_cls.buffer_realtime_audio(...)</code> 是模型定制点；Qwen3-Omni 就是在这里把连续音频切成 segment。</li>
@@ -413,6 +493,27 @@ async def buffer_realtime_audio(
             prompt_token_ids=prompt_token_ids,
             multi_modal_data={"audio": remaining},
         )</code></pre>
+        <pre class="flow"><code>几何图：连续音频时间轴被切成多块 TokensPrompt
+
+输入 waveform 时间轴:
+  t=0s                                                        t=end
+  |---- client chunk ----|-- chunk --|--------- chunk ---------|-- tail --|
+
+Qwen3ASRRealtimeBuffer 内部视图:
+  |----------- 5s segment -----------|----------- 5s segment -----------| tail |
+
+每个 yield 的形状:
+  prompt_token_ids:
+    [&lt;|im_start|&gt;, user, AUDIO_PLACEHOLDER, &lt;|im_end|&gt;, &lt;|im_start|&gt;, assistant]
+
+  multi_modal_data["audio"]:
+    segment 向量 [sample0, sample1, sample2, ... sampleN]
+
+async_chunk=true:
+  segment 满 5 秒就 yield
+
+async_chunk=false:
+  中间不 yield，只在 flush 时交出 tail/整段</code></pre>
         <ol class="explain">
           <li>先从 <code>model_config</code> 取 HF processor、feature extractor、sampling rate 和 tokenizer。采样率必须来自模型 processor，不能用客户端声称的值。</li>
           <li><code>segment_duration_s = 5.0</code> 定义模型侧低延迟切片大小；客户端 append 的 chunk 可以更小。</li>
@@ -429,6 +530,17 @@ async def buffer_realtime_audio(
 
     <section id="engine-streaming">
       <h2>3. engine streaming input：第一次 add request，后面 streaming update</h2>
+      <pre class="flow"><code>engine streaming input 的时间轴
+
+StreamingInput generator:
+  chunk0          chunk1              chunk2              end
+    |               |                   |                  |
+    v               v                   v                  v
+engine:
+  add_request  -> streaming_update -> streaming_update -> streaming_update(resumable=false)
+  resumable=true  resumable=true      resumable=true      final prompt [0]
+
+直观理解：这是同一条 request 的输入序列逐步变长，而不是多个独立请求。</code></pre>
 
       <div class="method">
         <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>AsyncOmni</code>，方法 <code>_add_streaming_input_request</code></p>
@@ -520,6 +632,30 @@ async def buffer_realtime_audio(
     input_stream_task = asyncio.create_task(handle_inputs())
     req_state.input_stream_task = input_stream_task
     return input_stream_task</code></pre>
+        <pre class="flow"><code>几何图：has_submitted_first_chunk 是分叉开关
+
+              AsyncGenerator[StreamingInput]
+                         |
+                         v
+              +---------------------+
+              | for chunk in stream |
+              +---------------------+
+                         |
+              has_submitted_first_chunk?
+                  /                 \
+              false                 true
+                |                     |
+                v                     v
+         add_request             add_streaming_update
+         resumable=true          resumable=true
+                |                     |
+                +----------+----------+
+                           v
+                    generator ended
+                           |
+                           v
+                final TokensPrompt([0])
+                resumable=false</code></pre>
         <ol class="explain">
           <li>这个方法只处理 engine 级 streaming input，因此入口参数是 <code>AsyncGenerator[StreamingInput]</code>。</li>
           <li>先校验 sampling params list，并只拿 Stage-0 的参数做 streaming 约束。</li>
@@ -620,6 +756,25 @@ async def buffer_realtime_audio(
                 logger.exception("Failed to send response.audio.done")
         while not self.audio_queue.empty():
             self.audio_queue.get_nowait()</code></pre>
+        <pre class="flow"><code>几何图：同一个 engine output 被拆成两条 websocket 输出通道
+
+engine.generate(streaming_input_gen)
+          |
+          v
+OmniRequestOutput 序列
+          |
+          +--> stage_id == 0
+          |       token ids: [u0, u1, ...] -> input_stream queue
+          |       text delta: "..."        -> response.text/transcription delta
+          |
+          +--> multimodal_output audio
+                  waveform tail: [a0, a1, ... aK]
+                       |
+                       v
+                  去重后新增 chunk -> PCM16 base64 -> response.audio.delta
+
+最后:
+  TranscriptionDone + response.audio.done</code></pre>
         <ol class="explain">
           <li>方法开头生成 realtime request id，并清空音频去重 ref；每次 websocket generation 都要从空 ref 开始。</li>
           <li><code>coerce_param_message_types(..., is_streaming=True)</code> 把默认输出参数转成适合 streaming 的 delta 形式。</li>
@@ -638,6 +793,26 @@ async def buffer_realtime_audio(
     <section id="text">
       <h2>4. 文本输入与文本流式输出</h2>
       <p>Qwen3-Omni 的文本输入在当前代码里通常不是 engine streaming input。它要么来自普通 chat request 的 <code>messages</code>，要么来自 video websocket 的 <code>video.query.text</code>。流式主要发生在输出：chat SSE 或 video stream 的 <code>response.text.delta</code>。</p>
+      <pre class="flow"><code>文本输入的几何直观
+
+messages:
+  [system text] [user text] [assistant prefix]
+         |
+         v
+chat template 渲染成一条字符串
+         |
+         v
+token ids 一维序列:
+  [t0, t1, t2, t3, ... tn]
+         |
+         v
+embedding 矩阵:
+  token 0 -> [e00 e01 e02 ... e0d]
+  token 1 -> [e10 e11 e12 ... e1d]
+  ...
+  token n -> [en0 en1 en2 ... end]
+
+如果 stream=true，通常是输出 token/text delta 流，不是输入 token 逐块进入 engine。</code></pre>
 
       <div class="method">
         <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>OmniInputPreprocessor</code>，方法 <code>_process_text</code></p>
@@ -696,6 +871,28 @@ async def buffer_realtime_audio(
         inputs["cache_salt"] = cache_salt
 
     return inputs</code></pre>
+        <pre class="flow"><code>几何图：_process_text 是三路分叉
+
+parsed_content
+  {
+    prompt: "...",
+    multi_modal_data?: {...},
+    mm_processor_kwargs?: {...}
+  }
+          |
+          v
+  +-------------------------------+
+  | 是否有 multi_modal_data ?      |
+  +-------------------------------+
+     | yes                         | no
+     v                             v
+_process_multimodal         是否显式带 mm_processor_kwargs ?
+                                  | yes              | no
+                                  v                  v
+                           _process_multimodal   _tokenize_prompt
+
+输出统一补齐:
+  prompt_embeds / additional_information / cache_salt</code></pre>
         <ol class="explain">
           <li>方法入口是已经 parse 好的 text prompt，核心字段是 <code>prompt</code>。</li>
           <li><code>mm_processor_kwargs</code> 即使为空也有意义：有些多模态模型需要通过 processor kwargs 触发 prompt scaffold。</li>
@@ -711,6 +908,18 @@ async def buffer_realtime_audio(
 
     <section id="video">
       <h2>5. 视频帧流 + 查询文本 + 可选音频</h2>
+      <pre class="flow"><code>video stream 总图：协议层流式，engine 层按 query 快照
+
+websocket 时间轴:
+  frame F0 -> frame F1 -> audio A0 -> frame F2 -> query("这是什么？") -> frame F3 -> query(...)
+
+session 内部 buffer:
+  frame_buffer: [F0][F1][F2]     query 时采样 -> [F0][F1][F2]
+  audio_buffer: [A0 bytes]       query 时复制 -> input_audio，然后清空
+  text:         "这是什么？"      query 时追加到 user content
+
+engine 看到的是一次普通多模态 chat request:
+  user content = [image][image][image][optional audio][text]</code></pre>
 
       <div class="method">
         <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>StreamingVideoSessionConfig</code></p>
@@ -756,6 +965,23 @@ async def buffer_realtime_audio(
         le=1.0,
         description="EVS similarity threshold (higher = keep more frames).",
     )</code></pre>
+        <pre class="flow"><code>几何图：config 是 session buffer 的边界条件
+
+frame_buffer 容量:
+  max_frames = 50
+  [F0][F1][F2] ... [F49]
+   ^
+   buffer 满后再来新帧，最左侧旧帧被 pop
+
+query 采样:
+  num_frames = 4
+  [F0][F1][F2][F3][F4]...[F49]
+    |       |       |       |
+    v       v       v       v
+  [S0]    [S1]    [S2]    [S3/latest]
+
+modalities = ["text", "audio"] 只控制输出通道:
+  response.text.delta + response.audio.delta</code></pre>
         <ol class="explain">
           <li>video stream 的第一条 websocket 消息必须是 <code>session.config</code>，这组字段就是它的 schema。</li>
           <li><code>modalities</code> 控制输出要 text、audio 还是两者都要；这不是输入模态。</li>
@@ -873,6 +1099,29 @@ elif msg_type == "video.query":
                 active_request_id = None
 
     query_task = asyncio.create_task(_run_query())</code></pre>
+        <pre class="flow"><code>几何图：handle_session 维护两个滚动容器
+
+video.frame:
+  base64 image -> raw bytes -> frame_filter -> frame_buffer
+
+frame_buffer 环形效果:
+  before: [F10][F11][F12]...[F59]
+  new F60 arrives and max_frames reached
+  after:  [F11][F12]...[F59][F60]
+
+PIL cache:
+  F60 base64 -> md5 uuid -> decode PIL in background
+  cache[F60] = (PIL image, uuid)
+
+audio.chunk:
+  PCM bytes -> audio_buffer
+  [byte0 byte1 ... byteN]
+
+video.query:
+  query_frames = copy(frame_buffer)
+  query_audio_buffer = copy(audio_buffer)
+  audio_buffer.clear()
+  _process_query runs in background</code></pre>
         <ol class="explain">
           <li><code>video.frame</code> 事件只把帧放入 session buffer，不立刻触发 engine。</li>
           <li>帧数据必须是 base64 图片，超过大小限制或解码失败都会被拒绝。</li>
@@ -959,6 +1208,27 @@ elif msg_type == "video.query":
     messages.append(user_message)
 
     return messages, user_message</code></pre>
+        <pre class="flow"><code>几何图：frame buffer 被采样成 OpenAI-style content blocks
+
+frame_buffer:
+  index:  0    1    2    3    4    5    6    7
+         [F0] [F1] [F2] [F3] [F4] [F5] [F6] [F7]
+
+num_frames = 4:
+  selected -> [F0] [F2] [F4] [F7]
+
+user_content:
+  [
+    {type: image_pil, uuid: md5(F0)},
+    {type: image_pil, uuid: md5(F2)},
+    {type: image_url, url: data:image/jpeg;base64,...},  fallback
+    {type: image_pil, uuid: md5(F7)},
+    {type: input_audio, data: wav_b64},                  optional
+    {type: text, text: query_text}                        optional
+  ]
+
+messages:
+  [system?] + recent text-only history + [current multimodal user message]</code></pre>
         <ol class="explain">
           <li>先按 <code>config.num_frames</code> 对 session frame buffer 做采样；不是每一帧都进模型。</li>
           <li>buffer 较长时，用 stride 采样，并强制保留最新一帧。</li>
@@ -1032,6 +1302,30 @@ async for output in result_gen:
             text_parts.append(delta_text)
             if streaming:
                 await websocket.send_json({"type": "response.text.delta", "delta": delta_text})</code></pre>
+        <pre class="flow"><code>几何图：一次 query 的输出被拆成 text lane 和 audio lane
+
+engine output 时间轴:
+  O0(text) -> O1(text) -> O2(audio) -> O3(audio) -> done
+
+text lane:
+  previous_text: "今"
+  current_text:  "今天"
+  delta:             "天"
+       |
+       v
+  response.text.delta
+
+audio lane:
+  cumulative waveform:
+    before drained: [a0 ... a99]
+    current output: [a0 ... a99][a100 ... a179]
+    new delta:                  [a100 ... a179]
+       |
+       v
+  wav/pcm base64 -> response.audio.delta
+
+如果发生 interrupt:
+  output 仍被 drain，但不再发 websocket delta。</code></pre>
         <ol class="explain">
           <li><code>engine_client.generate</code> 这里拿到的是一次 query 的 engine prompt，不是逐帧 streaming input。</li>
           <li><code>output_modalities=config.modalities</code> 决定输出 text、audio 或两者。</li>
@@ -1048,6 +1342,19 @@ async for output in result_gen:
 
     <section id="qwen3-mm">
       <h2>6. Qwen3-Omni 多模态处理器：audio / image / video 怎么进 Thinker</h2>
+      <pre class="flow"><code>Qwen3-Omni Thinker 输入的几何直观
+
+prompt token ids:
+  [text][image placeholder][text][audio placeholder][text][video placeholder]
+
+多模态特征:
+  image -> patch embedding 矩阵: [num_image_patches, hidden]
+  audio -> frame embedding 矩阵: [num_audio_frames, hidden]
+  video -> frame/patch embedding 矩阵: [num_video_tokens, hidden]
+
+最终输入 embedding:
+  [seq_len, hidden]
+  其中 placeholder 位置被对应模态 embedding 替换或展开合并。</code></pre>
 
       <div class="method">
         <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeThinkerMultiModalProcessor</code>，方法 <code>_call_hf_processor</code></p>
@@ -1127,6 +1434,26 @@ async for output in result_gen:
         hf_inputs["feature_attention_mask"] = [torch.ones(num_frame) for num_frame in audio_num_frames]
         hf_inputs["audio_feature_lengths"] = torch.tensor(audio_num_frames)
     return hf_inputs</code></pre>
+        <pre class="flow"><code>几何图：音频向量补齐到 hop_length 网格
+
+原始音频:
+  [x0 x1 x2 ... xL]
+
+hop_length = H
+如果 L 不能整除 H:
+  [x0 ... xL][0 0 0 ... 0]
+   |--------- padded length = k * H ---------|
+
+切成 feature frame:
+  frame 0: [x0 ... xH-1]
+  frame 1: [xH ... x2H-1]
+  ...
+  frame k: [...]
+
+feature_attention_mask:
+  [1, 1, 1, ..., 1]  长度 = audio_feature_lengths
+
+直观上，这是把一维 waveform 放到等宽时间格子里。</code></pre>
         <ol class="explain">
           <li>方法收到 renderer/preprocessor 汇总后的 <code>prompt</code>、<code>mm_data</code>、<code>mm_kwargs</code>、tokenizer kwargs。</li>
           <li>先把 <code>audios</code> 从 <code>mm_data</code> 里弹出，因为 Qwen3-Omni HF processor 期望字段名是 <code>audio</code>。</li>
@@ -1202,6 +1529,25 @@ async for output in result_gen:
         )
 
     return prompt_ids, mm_placeholders</code></pre>
+        <pre class="flow"><code>几何图：placeholder updates 是在 token 序列上铺占位块
+
+普通模式:
+  prompt ids:
+    [text][AUDIO_PAD][text][VIDEO_PAD][text]
+              |                |
+              v                v
+    audio placeholder       video placeholder
+
+audio-in-video 模式:
+  prompt ids:
+    [text][VIDEO_PAD ... VIDEO_PAD][text]
+              |
+              v
+    video placeholder 区间内部推导 audio placeholder
+
+为什么要判断 use_audio_in_video:
+  如果 audio 已经嵌在 video token 区间里，就不能再额外插入一段独立 audio placeholder，
+  否则后面的 embedding merge 会把模态数量和位置对不上。</code></pre>
         <ol class="explain">
           <li>这个方法决定多模态 placeholder token 怎么写进 prompt ids，并且是 Qwen3-Omni 处理 video+audio 交织的关键。</li>
           <li>先统计每种模态 item 数量，然后校验 <code>mm_kwargs</code> 与 item 数是否匹配。</li>
@@ -1237,6 +1583,23 @@ async for output in result_gen:
             audio_embeddings = self._process_audio_input(multimodal_input)
             multimodal_embeddings += tuple(audio_embeddings)
     return multimodal_embeddings</code></pre>
+        <pre class="flow"><code>几何图：各模态 embedding 被串成一个 tuple
+
+mm_input_by_modality:
+  image: [image0, image1]
+  video: [video0]
+  audio: [audio0]
+
+处理后:
+  image0 -> E_img0: [patches0, hidden]
+  image1 -> E_img1: [patches1, hidden]
+  video0 -> E_vid0: [video_tokens, hidden]
+  audio0 -> E_aud0: [audio_frames, hidden]
+
+multimodal_embeddings tuple:
+  (E_img0, E_img1, E_vid0, E_aud0)
+
+这个 tuple 后面会按 prompt 里的 placeholder 顺序被消费。</code></pre>
         <ol class="explain">
           <li>先从 kwargs 里解析并校验多模态输入，得到按模态分组的结构。</li>
           <li>没有多模态输入时返回空 list，后面走纯文本 embedding。</li>
@@ -1283,6 +1646,35 @@ return super().embed_input_ids(
     multimodal_embeddings=multimodal_embeddings,
     is_multimodal=is_multimodal,
 )</code></pre>
+        <pre class="flow"><code>几何图：把文本 embedding 矩阵里的 placeholder 区域替换成多模态块
+
+input_ids:
+  [ t0 ][ t1 ][ VID ][ VID ][ AUD ][ AUD ][ t2 ]
+
+文本 embedding 初稿 inputs_embeds:
+  row0: embedding(t0)
+  row1: embedding(t1)
+  row2: embedding(VID placeholder)
+  row3: embedding(VID placeholder)
+  row4: embedding(AUD placeholder)
+  row5: embedding(AUD placeholder)
+  row6: embedding(t2)
+
+mask:
+  is_video: [0,0,1,1,0,0,0]
+  is_audio: [0,0,0,0,1,1,0]
+
+interleaved 模式合并后:
+  row0: text t0
+  row1: text t1
+  row2-row3: video embedding block
+  row4-row5: audio embedding block
+  row6: text t2
+
+张量形状直观:
+  inputs_embeds: [seq_len, hidden]
+  video block:   [num_video_tokens, hidden]
+  audio block:   [num_audio_tokens, hidden]</code></pre>
         <ol class="explain">
           <li>先把所有 token ids 都用语言模型 embedding 层转成文本 embedding。</li>
           <li>没有多模态 embedding 时直接返回文本 embedding。</li>
