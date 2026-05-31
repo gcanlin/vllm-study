@@ -12,6 +12,11 @@
       label: "Qwen3 Structure",
     },
     {
+      href: "./qwen3_omni_streaming_inputs.html",
+      file: "qwen3_omni_streaming_inputs.html",
+      label: "Qwen3 Omni Streaming",
+    },
+    {
       href: "./vllm_cp_pcp_dcp.html",
       file: "vllm_cp_pcp_dcp.html",
       label: "CP / PCP / DCP",

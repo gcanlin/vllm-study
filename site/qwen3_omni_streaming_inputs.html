@@ -1,0 +1,1312 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen3-Omni 流式音频 / 文本 / 视频输入代码走读</title>
+  <link rel="stylesheet" href="./nav.css">
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5b6677;
+      --line: #d7deea;
+      --code-bg: #111827;
+      --code-ink: #e7eefb;
+      --blue: #2f6fda;
+      --green: #1c8065;
+      --orange: #b86413;
+      --red: #b43f4a;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.68 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      padding: 30px 40px 24px;
+      background: #101828;
+      color: #fff;
+    }
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    header p {
+      margin: 6px 0;
+      max-width: 1180px;
+      color: #ced8e6;
+    }
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 26px 24px 60px;
+    }
+    section {
+      margin: 0 0 20px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #eef2f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-size: 12.5px;
+      line-height: 1.55;
+    }
+    pre code {
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+    table {
+      width: 100%;
+      margin: 12px 0;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      background: #f0f4f9;
+      text-align: left;
+    }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+    .toc {
+      columns: 2;
+      padding-left: 18px;
+    }
+    .note {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: #eef5ff;
+      color: #1c314f;
+    }
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7eb;
+      color: #51330e;
+    }
+    .method {
+      margin: 18px 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcff;
+    }
+    .method-title {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: baseline;
+      margin: 0 0 8px;
+      font-weight: 700;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef2f7;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .explain {
+      margin-top: 8px;
+      padding-left: 20px;
+    }
+    .flow {
+      background: #0f172a;
+      color: #dbeafe;
+    }
+    @media (max-width: 860px) {
+      header { padding: 24px 18px; }
+      main { padding: 18px 12px 44px; }
+      section { padding: 16px; }
+      .toc { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="study-topnav" aria-label="Study note navigation">
+    <a class="study-topnav__brand" href="./">vLLM Study</a>
+    <div class="study-topnav__links"></div>
+  </nav>
+
+  <header>
+    <h1>Qwen3-Omni 流式音频、文本、视频输入代码走读</h1>
+    <p>基于本地最新 <code>vllm-omni</code> main：<code>5dfdf584</code>。本文不按历史变更讲，而按当前代码的实际入口、类、方法讲。</p>
+    <p class="small">写法约定：每段先放“类 + 方法”的源码，再在下面逐句解读。不使用源码行号，读的时候按代码块顺序看。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>目录</h2>
+      <ol class="toc">
+        <li><a href="#overview">三种输入先分清</a></li>
+        <li><a href="#audio">音频 realtime streaming</a></li>
+        <li><a href="#engine-streaming">engine streaming input</a></li>
+        <li><a href="#text">文本输入与文本流式输出</a></li>
+        <li><a href="#video">视频帧流 + 查询文本 + 可选音频</a></li>
+        <li><a href="#qwen3-mm">Qwen3-Omni 多模态处理器</a></li>
+        <li><a href="#summary">读码结论</a></li>
+      </ol>
+    </section>
+
+    <section id="overview">
+      <h2>1. 三种输入先分清</h2>
+      <table>
+        <tr><th>输入类型</th><th>当前代码里的入口</th><th>是不是 engine 级 streaming input</th><th>Qwen3-Omni 里发生什么</th></tr>
+        <tr>
+          <td>音频 realtime</td>
+          <td><code>/v1/realtime</code>，事件 <code>input_audio_buffer.append</code> / <code>commit</code></td>
+          <td>是。音频 chunk 先进入 queue，再被 <code>buffer_realtime_audio</code> 切成多次 <code>StreamingInput</code>。</td>
+          <td>每个音频 segment 变成带 <code>multi_modal_data={"audio": segment}</code> 的 <code>TokensPrompt</code>。</td>
+        </tr>
+        <tr>
+          <td>文本输入</td>
+          <td><code>/v1/chat/completions</code> 或 video stream 里的 <code>video.query.text</code></td>
+          <td>通常不是。文本是一次 prompt 的一部分；流式主要体现在输出 delta。</td>
+          <td>文本被 renderer/chat template 转成 token ids，进入 Thinker。video stream 里文本 query 会和当前帧/音频 buffer 拼成一次 chat request。</td>
+        </tr>
+        <tr>
+          <td>视频输入</td>
+          <td><code>/v1/video/chat/stream</code>，事件 <code>video.frame</code> / <code>video.query</code></td>
+          <td>不是逐帧进入 engine。WebSocket 层持续收帧；每次 query 把当前 frame buffer 采样成一次 prompt。</td>
+          <td>帧被转成 <code>image_pil</code> 或 <code>image_url</code> content block；Qwen3-Omni processor 把它当 image/video 视觉 token 处理。</td>
+        </tr>
+      </table>
+      <pre class="flow"><code>/v1/realtime audio
+  websocket audio append -> audio_queue -> buffer_realtime_audio()
+  -> AsyncGenerator[StreamingInput] -> AsyncOmni add_request / streaming_update
+  -> Qwen3 Thinker -> Talker -> Code2Wav -> response.audio.delta
+
+/v1/video/chat/stream
+  websocket video.frame/audio.chunk -> session buffers
+  video.query(text) -> sample frames + current audio + text -> ChatCompletionRequest
+  -> engine.generate once per query -> response.text.delta + optional response.audio.delta
+
+/v1/chat/completions
+  messages text/audio_url/video_url -> renderer + OmniInputPreprocessor
+  -> Qwen3 Thinker multimodal embeddings -> output stream if stream=true</code></pre>
+      <div class="note">所以，“音频 realtime”是 engine 层真正的 streaming input；“视频 stream”是协议层持续收集视频帧，query 时快照成一次多模态请求；“文本输入”目前主要是 request/query 边界的输入，文本 streaming 更多体现在输出 delta。</div>
+    </section>
+
+    <section id="audio">
+      <h2>2. 音频 realtime streaming</h2>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">上游 vLLM</span> 类 <code>RealtimeConnection</code>，方法 <code>handle_event</code></p>
+        <pre><code class="language-python">async def handle_event(self, event: dict):
+    """Route events to handlers.
+
+    Supported event types:
+    - session.update: Configure model
+    - input_audio_buffer.append: Add audio chunk to queue
+    - input_audio_buffer.commit: Start transcription generation
+    """
+    event_type = event.get("type")
+    if event_type == "session.update":
+        logger.debug("Session updated: %s", event)
+        model = event.get("model")
+        if model is None:
+            await self.send_error("Missing required field: model", "invalid_event")
+            return
+        err = self._check_model(model)
+        if err is not None:
+            await self.send_error(err.error.message, "model_not_found")
+            return
+        self._is_model_validated = True
+    elif event_type == "input_audio_buffer.append":
+        append_event = InputAudioBufferAppend(**event)
+        try:
+            audio_bytes = base64.b64decode(append_event.audio)
+            audio_array = (
+                np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+                / 32768.0
+            )
+
+            if len(audio_array) / 1024**2 > self._max_audio_filesize_mb:
+                raise VLLMValidationError(
+                    "Maximum file size exceeded",
+                    parameter="audio_filesize_mb",
+                    value=len(audio_array) / 1024**2,
+                )
+            if len(audio_array) == 0:
+                raise VLLMValidationError("Can't process empty audio.")
+
+            self.audio_queue.put_nowait(audio_array)
+
+        except Exception as e:
+            logger.error("Failed to decode audio: %s", e)
+            await self.send_error("Invalid audio data", "invalid_audio")
+
+    elif event_type == "input_audio_buffer.commit":
+        if not self._is_model_validated:
+            err_msg = (
+                "Model not validated. Make sure to validate the"
+                " model by sending a session.update event."
+            )
+            await self.send_error(
+                err_msg,
+                "model_not_validated",
+            )
+            return
+
+        commit_event = InputAudioBufferCommit(**event)
+        if commit_event.final:
+            self.audio_queue.put_nowait(None)
+        else:
+            await self.start_generation()
+    else:
+        await self.send_error(f"Unknown event type: {event_type}", "unknown_event")</code></pre>
+        <ol class="explain">
+          <li>方法先取 <code>event["type"]</code>，整个 realtime 输入协议就是靠这个字段分发。</li>
+          <li><code>session.update</code> 只做模型校验。没有通过这个事件，后面的 <code>commit</code> 不会启动生成。</li>
+          <li><code>input_audio_buffer.append</code> 把客户端发来的 base64 PCM16 解码成 bytes。</li>
+          <li><code>np.frombuffer(..., dtype=np.int16).astype(np.float32) / 32768.0</code> 把 PCM16 归一化成模型 realtime buffer 消费的 float32 波形。</li>
+          <li>文件大小和空音频校验都发生在入队前；校验失败不会污染 <code>audio_queue</code>。</li>
+          <li><code>self.audio_queue.put_nowait(audio_array)</code> 是音频输入流的第一个真实 buffer。append 本身不启动推理，只累积数据。</li>
+          <li><code>input_audio_buffer.commit</code> 有两种语义：<code>final=false</code> 启动 generation；<code>final=true</code> 放入 <code>None</code> sentinel，告诉 audio generator 音频结束。</li>
+          <li>这里没有 text/video 事件；<code>/v1/realtime</code> 当前这条链路是 audio-first。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">上游 vLLM</span> 类 <code>RealtimeConnection</code>，方法 <code>start_generation</code></p>
+        <pre><code class="language-python">async def start_generation(self):
+    """Start the transcription generation task."""
+    if self.generation_task is not None and not self.generation_task.done():
+        logger.warning("Generation already in progress, ignoring commit")
+        return
+
+    audio_stream = self.audio_stream_generator()
+    input_stream = asyncio.Queue[list[int]]()
+
+    streaming_input_gen = self.serving.transcribe_realtime(
+        audio_stream, input_stream
+    )
+
+    self.generation_task = asyncio.create_task(
+        self._run_generation(streaming_input_gen, input_stream)
+    )</code></pre>
+        <ol class="explain">
+          <li>已有 generation task 未结束时，重复 commit 会被忽略，避免同一个 websocket connection 同时跑两条 engine request。</li>
+          <li><code>audio_stream_generator()</code> 把 <code>audio_queue</code> 包装成 async generator；它遇到 <code>None</code> sentinel 会停止。</li>
+          <li><code>input_stream</code> 是反向上下文通道：模型输出的新 token id 会被放回这个 queue，供下一轮 realtime prompt 使用。</li>
+          <li><code>serving.transcribe_realtime(...)</code> 把裸音频流转换成 engine 可消费的 <code>StreamingInput</code> 流。</li>
+          <li>真正的 engine 调用不在这里直接 await，而是创建后台 task，由 Omni 子类的 <code>_run_generation</code> 负责消费输出并发 websocket 事件。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">上游 vLLM</span> 类 <code>OpenAIServingRealtime</code>，方法 <code>transcribe_realtime</code></p>
+        <pre><code class="language-python">async def transcribe_realtime(
+    self,
+    audio_stream: AsyncGenerator[np.ndarray, None],
+    input_stream: asyncio.Queue[list[int]],
+) -&gt; AsyncGenerator[StreamingInput, None]:
+    """Transform audio stream into StreamingInput for engine.generate()."""
+    model_config = self.model_config
+    renderer = self.renderer
+
+    stream_input_iter = cast(
+        AsyncGenerator[PromptType, None],
+        self.model_cls.buffer_realtime_audio(
+            audio_stream, input_stream, model_config
+        ),
+    )
+
+    async for prompt in stream_input_iter:
+        parsed_prompt = parse_model_prompt(model_config, prompt)
+        (engine_input,) = await renderer.render_cmpl_async([parsed_prompt])
+
+        yield StreamingInput(prompt=engine_input)</code></pre>
+        <ol class="explain">
+          <li>这个方法不懂 Qwen3-Omni 的切片策略，只负责把模型类产出的 prompt 渲染成 engine input。</li>
+          <li><code>self.model_cls.buffer_realtime_audio(...)</code> 是模型定制点；Qwen3-Omni 就是在这里把连续音频切成 segment。</li>
+          <li><code>parse_model_prompt</code> 把 <code>TokensPrompt</code> / dict prompt 统一成 renderer 可处理的结构。</li>
+          <li><code>renderer.render_cmpl_async</code> 走 chat/completion renderer，输出 vLLM engine input。</li>
+          <li><code>yield StreamingInput(prompt=engine_input)</code> 是 engine streaming input 的边界：之后 <code>AsyncOmni</code> 会把第一次 yield 当 add request，后续 yield 当 streaming update。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeForConditionalGeneration</code>，方法 <code>buffer_realtime_audio</code></p>
+        <pre><code class="language-python">@classmethod
+async def buffer_realtime_audio(
+    cls,
+    audio_stream: AsyncGenerator[np.ndarray, None],
+    input_stream: asyncio.Queue[list[int]],
+    model_config: ModelConfig,
+) -&gt; AsyncGenerator[PromptType, None]:
+    processor = cached_processor_from_config(model_config)
+    feature_extractor = processor.feature_extractor
+    sampling_rate = feature_extractor.sampling_rate
+    tokenizer = cached_tokenizer_from_config(model_config)
+
+    segment_duration_s = 5.0
+    buffer = Qwen3ASRRealtimeBuffer(
+        sampling_rate=sampling_rate,
+        segment_duration_s=segment_duration_s,
+    )
+
+    audio_placeholder = Qwen3OmniMoeThinkerForConditionalGeneration.get_placeholder_str("audio", 0)
+    prompt_template = f"&lt;|im_start|&gt;user\n{audio_placeholder}&lt;|im_end|&gt;\n&lt;|im_start|&gt;assistant\n"
+
+    prompt_token_ids = tokenizer.encode(prompt_template)
+
+    async_chunk = getattr(model_config, "async_chunk", False)
+
+    async for audio_chunk in audio_stream:
+        buffer.write_audio(audio_chunk)
+
+        if async_chunk:
+            while (segment := buffer.read_audio()) is not None:
+                yield TokensPrompt(
+                    prompt_token_ids=prompt_token_ids,
+                    multi_modal_data={"audio": segment},
+                )
+
+    remaining = buffer.flush()
+    if remaining is not None and len(remaining) &gt; 0:
+        yield TokensPrompt(
+            prompt_token_ids=prompt_token_ids,
+            multi_modal_data={"audio": remaining},
+        )</code></pre>
+        <ol class="explain">
+          <li>先从 <code>model_config</code> 取 HF processor、feature extractor、sampling rate 和 tokenizer。采样率必须来自模型 processor，不能用客户端声称的值。</li>
+          <li><code>segment_duration_s = 5.0</code> 定义模型侧低延迟切片大小；客户端 append 的 chunk 可以更小。</li>
+          <li><code>Qwen3ASRRealtimeBuffer</code> 负责把多个 websocket audio chunk 拼成稳定的 5 秒左右 segment。</li>
+          <li><code>audio_placeholder</code> 生成 Qwen3-Omni Thinker 识别的音频占位符。</li>
+          <li><code>prompt_template</code> 是固定 user audio + assistant 开头；每个 segment 复用同一段 token 模板，真正不同的是 <code>multi_modal_data["audio"]</code>。</li>
+          <li><code>async_chunk</code> 决定中间 segment 是否可以提前 yield。开启时，buffer 每读出一个完整 segment 就 yield。</li>
+          <li>yield 的对象是 <code>TokensPrompt</code>：token ids 是固定模板，音频 numpy segment 放在 <code>multi_modal_data</code>。</li>
+          <li>音频流结束后调用 <code>flush()</code>。如果还有尾巴音频，不管是否 async_chunk，都要最后 yield 一次，避免丢尾音频。</li>
+          <li><code>input_stream</code> 在这个方法当前实现里没有直接读取；它由 realtime connection 传入，保留给需要把上一轮生成 token 作为下一轮上下文的模型实现。</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="engine-streaming">
+      <h2>3. engine streaming input：第一次 add request，后面 streaming update</h2>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>AsyncOmni</code>，方法 <code>_add_streaming_input_request</code></p>
+        <pre><code class="language-python">async def _add_streaming_input_request(
+    self,
+    *,
+    request_id: str,
+    input_stream: AsyncGenerator[StreamingInput, None],
+    sampling_params_list: Sequence[OmniSamplingParams],
+    final_stage_id: int,
+) -&gt; asyncio.Task:
+    """Submit a streaming input generator as incremental stage-0 updates."""
+    if not sampling_params_list:
+        raise ValueError("sampling_params_list cannot be empty for streaming input")
+    stage0_params = sampling_params_list[0]
+    self._validate_streaming_input_sampling_params(stage0_params)
+    req_state = self.request_states[request_id]
+    has_submitted_first_chunk = False
+
+    if not stage0_params.skip_clone:
+        stage0_params = stage0_params.clone()
+        stage0_params.skip_clone = True
+
+    async def handle_inputs() -&gt; None:
+        nonlocal has_submitted_first_chunk
+        cancelled = False
+        try:
+            async for chunk in input_stream:
+                chunk_params = getattr(chunk, "sampling_params", None) or stage0_params
+                self._validate_streaming_input_sampling_params(chunk_params)
+                chunk_sampling_params_list = list(sampling_params_list)
+                chunk_sampling_params_list[0] = chunk_params
+                chunk_prompt = chunk.prompt
+                prompt_text, _, _ = extract_prompt_components(self.model_config, chunk_prompt)
+
+                if not has_submitted_first_chunk:
+                    await self.engine.add_request_async(
+                        request_id=request_id,
+                        prompt=chunk_prompt,
+                        prompt_text=prompt_text,
+                        sampling_params_list=chunk_sampling_params_list,
+                        final_stage_id=final_stage_id,
+                        resumable=True,
+                    )
+                    has_submitted_first_chunk = True
+                else:
+                    await self.engine.add_streaming_update_async(
+                        request_id=request_id,
+                        prompt=chunk_prompt,
+                        prompt_text=prompt_text,
+                        sampling_params_list=chunk_sampling_params_list,
+                        final_stage_id=final_stage_id,
+                        resumable=True,
+                    )
+        except (asyncio.CancelledError, GeneratorExit):
+            cancelled = True
+        except Exception as error:
+            await req_state.queue.put(
+                ErrorMessage(
+                    request_id=request_id,
+                    error=str(error),
+                )
+            )
+        finally:
+            if not cancelled:
+                final_sampling_params_list = list(sampling_params_list)
+                final_sampling_params_list[0] = stage0_params
+                final_prompt = TokensPrompt(prompt_token_ids=[0])
+
+                if has_submitted_first_chunk:
+                    await self.engine.add_streaming_update_async(
+                        request_id=request_id,
+                        prompt=final_prompt,
+                        prompt_text=None,
+                        sampling_params_list=final_sampling_params_list,
+                        final_stage_id=final_stage_id,
+                        resumable=False,
+                    )
+                else:
+                    await self.engine.add_request_async(
+                        request_id=request_id,
+                        prompt=final_prompt,
+                        prompt_text=None,
+                        sampling_params_list=final_sampling_params_list,
+                        final_stage_id=final_stage_id,
+                        resumable=False,
+                    )
+
+    input_stream_task = asyncio.create_task(handle_inputs())
+    req_state.input_stream_task = input_stream_task
+    return input_stream_task</code></pre>
+        <ol class="explain">
+          <li>这个方法只处理 engine 级 streaming input，因此入口参数是 <code>AsyncGenerator[StreamingInput]</code>。</li>
+          <li>先校验 sampling params list，并只拿 Stage-0 的参数做 streaming 约束。</li>
+          <li><code>has_submitted_first_chunk</code> 是关键状态：它决定当前 chunk 是创建新 request，还是更新已有 request。</li>
+          <li>如果 Stage-0 参数还没标记 <code>skip_clone</code>，先 clone 一次并设置 skip，避免每个 segment 都重复深拷贝。</li>
+          <li>内部 <code>handle_inputs</code> 作为后台 task 消费 input stream；它不会阻塞外层 <code>generate</code> 的输出消费。</li>
+          <li>每个 <code>StreamingInput</code> 可以自带 sampling params；没有就复用 Stage-0 参数。</li>
+          <li>第一次 chunk 调 <code>add_request_async(..., resumable=True)</code>，在 scheduler 里创建可续接 request。</li>
+          <li>后续 chunk 调 <code>add_streaming_update_async(..., resumable=True)</code>，语义是同一个 request 的下一段输入。</li>
+          <li>输入 generator 正常结束时，会发送一个 <code>TokensPrompt([0])</code> 的 final update，并把 <code>resumable=False</code>。这是整条 streaming request 的终止信号。</li>
+          <li>如果输入 task 被取消，不发送 final update，因为上层通常会 abort request。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>RealtimeConnection</code>，方法 <code>_run_generation</code></p>
+        <pre><code class="language-python">async def _run_generation(
+    self,
+    streaming_input_gen: AsyncGenerator,
+    input_stream: asyncio.Queue[list[int]],
+):
+    request_id = f"rt-{self.connection_id}-{uuid4()}"
+    sent_audio = False
+    audio_done_sent = False
+    full_text = ""
+    prompt_token_ids_len = 0
+    completion_tokens_len = 0
+    self._realtime_audio_ref = None
+
+    sampling_params_list = list(self.engine.default_sampling_params_list)
+    sampling_params_list = coerce_param_message_types(
+        sampling_params_list,
+        is_streaming=True,
+    )
+
+    try:
+        result_gen = self.engine.generate(
+            prompt=streaming_input_gen,
+            request_id=request_id,
+            sampling_params_list=sampling_params_list,
+        )
+
+        async for output in result_gen:
+            stage_id = getattr(output, "stage_id", None)
+            if stage_id == 0 and output.outputs:
+                first_output = output.outputs[0]
+                new_token_ids = list(first_output.token_ids)
+                if new_token_ids:
+                    input_stream.put_nowait(new_token_ids)
+
+                if output.prompt_token_ids:
+                    prompt_token_ids_len = max(
+                        prompt_token_ids_len,
+                        len(output.prompt_token_ids),
+                    )
+
+                delta_text = first_output.text or ""
+                full_text += delta_text
+                completion_tokens_len += len(new_token_ids)
+
+                if delta_text:
+                    await self.send(TranscriptionDelta(delta=delta_text))
+
+            audio_chunks, sample_rate = self._extract_audio_chunks(output)
+
+            for chunk in audio_chunks:
+                sent_audio = True
+                await self.send_json(
+                    {
+                        "type": "response.audio.delta",
+                        "audio": self._pcm16_b64(chunk),
+                        "format": "pcm16",
+                        "sample_rate_hz": sample_rate,
+                    }
+                )
+
+            if not self._is_connected:
+                break
+
+        usage = UsageInfo(
+            prompt_tokens=prompt_token_ids_len,
+            completion_tokens=completion_tokens_len,
+            total_tokens=prompt_token_ids_len + completion_tokens_len,
+        )
+        await self.send(TranscriptionDone(text=full_text, usage=usage))
+
+        if sent_audio:
+            await self.send_json({"type": "response.audio.done", "has_audio": True})
+            audio_done_sent = True
+    except Exception as e:
+        logger.exception("Error in generation: %s", e)
+        await self.send_error(str(e), "processing_error")
+    finally:
+        if self._is_connected and not audio_done_sent:
+            try:
+                await self.send_json({"type": "response.audio.done", "has_audio": sent_audio})
+            except Exception:
+                logger.exception("Failed to send response.audio.done")
+        while not self.audio_queue.empty():
+            self.audio_queue.get_nowait()</code></pre>
+        <ol class="explain">
+          <li>方法开头生成 realtime request id，并清空音频去重 ref；每次 websocket generation 都要从空 ref 开始。</li>
+          <li><code>coerce_param_message_types(..., is_streaming=True)</code> 把默认输出参数转成适合 streaming 的 delta 形式。</li>
+          <li><code>self.engine.generate(prompt=streaming_input_gen, ...)</code> 是关键调用：这里传入的是 streaming generator，不是一次性 prompt。</li>
+          <li>循环里先看 <code>stage_id</code>。只有 Stage-0 的文本输出会被当作 transcription delta。</li>
+          <li>Stage-0 新 token id 会放回 <code>input_stream</code>，保留给后续 streaming prompt 的上下文机制。</li>
+          <li><code>delta_text</code> 累计进 <code>full_text</code>，同时以 <code>TranscriptionDelta</code> 发给客户端。</li>
+          <li><code>_extract_audio_chunks</code> 从 Omni output 的 <code>multimodal_output</code> 里抽音频，并做累计 waveform 去重。</li>
+          <li>每个音频 chunk 被转成 PCM16 base64，通过 <code>response.audio.delta</code> 发出。</li>
+          <li>engine generator 结束后，先发 <code>TranscriptionDone</code>，再按需发 <code>response.audio.done</code>。</li>
+          <li><code>finally</code> 兜底发送 audio done，避免客户端一直等；最后清空音频 queue，防止旧输入污染下一轮。</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="text">
+      <h2>4. 文本输入与文本流式输出</h2>
+      <p>Qwen3-Omni 的文本输入在当前代码里通常不是 engine streaming input。它要么来自普通 chat request 的 <code>messages</code>，要么来自 video websocket 的 <code>video.query.text</code>。流式主要发生在输出：chat SSE 或 video stream 的 <code>response.text.delta</code>。</p>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>OmniInputPreprocessor</code>，方法 <code>_process_text</code></p>
+        <pre><code class="language-python">def _process_text(
+    self,
+    parsed_content: OmniTextPrompt,
+    tokenization_kwargs: dict[str, Any] | None = None,
+    *,
+    mm_uuids: Any | None = None,
+) -&gt; OmniTokenInputs | MultiModalInput:
+    """Process text prompts with support for mm_processor_kwargs."""
+    prompt_text = parsed_content["prompt"]
+    mm_processor_kwargs = parsed_content.get("mm_processor_kwargs") or {}
+    effective_mm_uuids = mm_uuids or parsed_content.get("multi_modal_uuids")
+
+    inputs: OmniTokenInputs | MultiModalInput
+    if multi_modal_data := parsed_content.get("multi_modal_data"):
+        inputs = self._process_multimodal(
+            prompt_text,
+            multi_modal_data,
+            mm_processor_kwargs,
+            tokenization_kwargs=tokenization_kwargs,
+            mm_uuids=effective_mm_uuids,
+        )
+        prompt_embeds = parsed_content.get("prompt_embeds")
+        if prompt_embeds is not None:
+            inputs["prompt_embeds"] = prompt_embeds
+        additional_information = parsed_content.get("additional_information")
+        if additional_information is not None:
+            inputs["additional_information"] = additional_information
+    elif "mm_processor_kwargs" in parsed_content:
+        inputs = self._process_multimodal(
+            prompt_text,
+            {},
+            mm_processor_kwargs,
+            tokenization_kwargs=tokenization_kwargs,
+            mm_uuids=effective_mm_uuids,
+        )
+    else:
+        prompt_token_ids = self._tokenize_prompt(
+            prompt_text,
+            tokenization_kwargs=tokenization_kwargs,
+        )
+        inputs = token_inputs_omni(
+            prompt_token_ids,
+            prompt_embeds=parsed_content.get("prompt_embeds"),
+            additional_information=parsed_content.get("additional_information"),
+        )
+    prompt_embeds = parsed_content.get("prompt_embeds")
+    if prompt_embeds is not None:
+        inputs["prompt_embeds"] = prompt_embeds
+    additional_information = parsed_content.get("additional_information")
+    if additional_information is not None:
+        inputs["additional_information"] = additional_information
+    if cache_salt := parsed_content.get("cache_salt"):
+        inputs["cache_salt"] = cache_salt
+
+    return inputs</code></pre>
+        <ol class="explain">
+          <li>方法入口是已经 parse 好的 text prompt，核心字段是 <code>prompt</code>。</li>
+          <li><code>mm_processor_kwargs</code> 即使为空也有意义：有些多模态模型需要通过 processor kwargs 触发 prompt scaffold。</li>
+          <li>如果存在 <code>multi_modal_data</code>，文本不会单独 tokenize，而是和 audio/image/video 一起交给 <code>_process_multimodal</code>。</li>
+          <li>多模态分支会保留 <code>prompt_embeds</code> 和 <code>additional_information</code>，这对 Omni 多 stage 传递很重要。</li>
+          <li>如果没有多模态数据但显式带了 <code>mm_processor_kwargs</code>，仍然走 multimodal processor，方便模型用 processor 默认值构造输入。</li>
+          <li>纯文本分支才调用 <code>_tokenize_prompt</code>，然后用 <code>token_inputs_omni</code> 包成 Omni token input。</li>
+          <li>方法尾部再次统一补 <code>prompt_embeds</code>、<code>additional_information</code>、<code>cache_salt</code>，保证各分支输出字段一致。</li>
+          <li>所以普通文本输入的本质是“一次 request 的 token prompt”，不是像 audio realtime 那样多次 yield <code>StreamingInput</code>。</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="video">
+      <h2>5. 视频帧流 + 查询文本 + 可选音频</h2>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>StreamingVideoSessionConfig</code></p>
+        <pre><code class="language-python">class StreamingVideoSessionConfig(BaseModel):
+    """Configuration sent as the first WebSocket message."""
+
+    model: str | None = None
+    modalities: list[str] = Field(
+        default_factory=lambda: ["text", "audio"],
+        description="Output modalities: 'text', 'audio', or both.",
+    )
+    num_frames: int = Field(
+        default=4,
+        ge=1,
+        le=128,
+        description="Max frames to sample from buffer for the model.",
+    )
+    max_frames: int = Field(
+        default=50,
+        ge=1,
+        le=256,
+        description="Max frames to keep in the buffer.",
+    )
+    system_prompt: str | None = Field(
+        default=None,
+        description="Custom system prompt.",
+    )
+    use_audio_in_video: bool = Field(
+        default=True,
+        description="Interleave audio chunks with video frames when audio input is present.",
+    )
+    sampling_params_list: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Per-stage sampling params [thinker, talker, code2wav].",
+    )
+    enable_frame_filter: bool = Field(
+        default=True,
+        description="EVS pixel-similarity pre-filter to drop near-duplicate frames.",
+    )
+    frame_filter_threshold: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="EVS similarity threshold (higher = keep more frames).",
+    )</code></pre>
+        <ol class="explain">
+          <li>video stream 的第一条 websocket 消息必须是 <code>session.config</code>，这组字段就是它的 schema。</li>
+          <li><code>modalities</code> 控制输出要 text、audio 还是两者都要；这不是输入模态。</li>
+          <li><code>num_frames</code> 是每次 query 送进模型的采样帧数；<code>max_frames</code> 是 session buffer 最多保留多少帧。</li>
+          <li><code>use_audio_in_video</code> 控制有音频输入时是否让 Qwen3-Omni 按 audio-in-video 方式处理。</li>
+          <li><code>sampling_params_list</code> 可以覆盖 Thinker、Talker、Code2Wav 三个 stage 的采样参数。</li>
+          <li>frame filter 用来丢弃近似重复帧，减少视觉 token 和预处理压力。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>OmniStreamingVideoHandler</code>，方法 <code>handle_session</code> 的消息处理核心</p>
+        <pre><code class="language-python">elif msg_type == "video.frame":
+    frame_data = msg.get("data", "")
+    if not frame_data:
+        continue
+    if len(frame_data) &gt; _MAX_FRAME_SIZE:
+        await self._send_error(websocket, "Frame too large")
+        continue
+    try:
+        raw_bytes = base64.b64decode(frame_data, validate=True)
+    except Exception:
+        await self._send_error(websocket, "Invalid image data")
+        continue
+    if frame_filter is not None:
+        try:
+            if not frame_filter.should_retain(raw_bytes):
+                continue
+        except Exception:
+            await self._send_error(websocket, "Invalid image data")
+            continue
+    max_buf = config.max_frames
+    if len(frame_buffer) &gt;= max_buf:
+        dropped = frame_buffer.pop(0)
+        frame_pil_cache.pop(dropped, None)
+    frame_buffer.append(frame_data)
+    if frame_data not in frame_pil_cache:
+        mm_uuid = hashlib.md5(raw_bytes, usedforsecurity=False).hexdigest()
+
+        async def _prewarm(b64: str, b: bytes, u: str) -&gt; None:
+            try:
+                pil = await asyncio.to_thread(_decode_frame_bytes, b)
+                frame_pil_cache[b64] = (pil, u)
+            except Exception:
+                frame_pil_cache[b64] = _BAD_FRAME
+                logger.warning("prewarm decode failed for frame (len=%d)", len(b))
+                try:
+                    msg_queue.put_nowait({"type": "_internal.frame_decode_failed", "b64": b64})
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "frame decode failure event dropped because message queue is full"
+                    )
+
+        task = asyncio.create_task(_prewarm(frame_data, raw_bytes, mm_uuid))
+        prewarm_tasks.add(task)
+        task.add_done_callback(prewarm_tasks.discard)
+
+elif msg_type == "audio.chunk":
+    data_b64 = msg.get("data", "")
+    try:
+        pcm_bytes = base64.b64decode(data_b64)
+    except Exception:
+        continue
+    if len(audio_buffer) + len(pcm_bytes) &gt; _MAX_AUDIO_BUFFER_BYTES:
+        await self._send_error(websocket, "Audio buffer overflow")
+        audio_buffer.clear()
+        continue
+    audio_buffer.extend(pcm_bytes)
+
+elif msg_type == "video.query":
+    await _cancel_active_query()
+
+    query_text = msg.get("text", "")
+    audio_data_b64 = msg.get("audio_data")
+    if audio_data_b64:
+        try:
+            decoded = base64.b64decode(audio_data_b64)
+            if len(audio_buffer) + len(decoded) &lt;= _MAX_AUDIO_BUFFER_BYTES:
+                audio_buffer.extend(decoded)
+            else:
+                await self._send_error(websocket, "Audio buffer overflow")
+                audio_buffer.clear()
+        except Exception:
+            pass
+
+    if not frame_buffer:
+        await self._send_error(websocket, "No frames buffered")
+        continue
+
+    request_id = f"video-{uuid.uuid4().hex[:12]}"
+    active_request_id = request_id
+    interrupt_event.clear()
+    query_frames = list(frame_buffer)
+    query_audio_buffer = bytearray(audio_buffer)
+    audio_buffer.clear()
+    query_prewarmed_frames = dict(frame_pil_cache)
+
+    async def _run_query() -&gt; None:
+        nonlocal active_request_id, prev_request_id
+        try:
+            await self._process_query(
+                websocket,
+                config,
+                query_frames,
+                query_audio_buffer,
+                message_history,
+                query_text,
+                request_id,
+                interrupt_event,
+                query_prewarmed_frames,
+            )
+        finally:
+            if active_request_id == request_id:
+                prev_request_id = request_id
+                active_request_id = None
+
+    query_task = asyncio.create_task(_run_query())</code></pre>
+        <ol class="explain">
+          <li><code>video.frame</code> 事件只把帧放入 session buffer，不立刻触发 engine。</li>
+          <li>帧数据必须是 base64 图片，超过大小限制或解码失败都会被拒绝。</li>
+          <li>frame filter 打开时，近似重复帧会直接丢弃，这一步发生在进入 frame buffer 前。</li>
+          <li>frame buffer 满了会丢最老帧，并清理对应 PIL cache。</li>
+          <li>预热任务把图片 bytes 解码成 PIL，并用 md5 当 <code>uuid</code>，后面构造 prompt 时可复用多模态 cache。</li>
+          <li><code>audio.chunk</code> 事件把 PCM bytes 追加到 <code>audio_buffer</code>，同样不直接触发 engine。</li>
+          <li><code>video.query</code> 才是一次推理边界：先软中断正在跑的 query，然后读取 query 文本。</li>
+          <li>query 事件也可以携带一次性的 <code>audio_data</code>，会追加到当前 audio buffer。</li>
+          <li>没有任何帧时拒绝 query，因为这个 endpoint 的语义是 video chat stream。</li>
+          <li>触发 query 时，会快照当前 frame buffer、audio buffer、PIL cache；随后清空 audio buffer。视频帧会继续保留，音频按 query 消费。</li>
+          <li><code>_process_query</code> 在后台 task 里跑，所以 reader 还能继续收后续帧或下一次 query。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>OmniStreamingVideoHandler</code>，方法 <code>_build_messages</code></p>
+        <pre><code class="language-python">def _build_messages(
+    self,
+    config: StreamingVideoSessionConfig,
+    frame_buffer: list[str],
+    audio_buffer: bytearray,
+    message_history: list[dict[str, Any]],
+    query_text: str,
+    prewarmed_frames: dict[str, tuple[Any, str]],
+) -&gt; tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build OpenAI-style messages list and the current user message."""
+    n_buf = len(frame_buffer)
+    if n_buf &lt;= config.num_frames:
+        frames = list(frame_buffer)
+    else:
+        stride = max(1, n_buf // config.num_frames)
+        idx = [i * stride for i in range(config.num_frames - 1)] + [n_buf - 1]
+        frames = [frame_buffer[i] for i in idx]
+
+    prewarmed = prewarmed_frames or {}
+    user_content: list[dict] = []
+    for frame_b64 in frames:
+        cached = prewarmed.get(frame_b64)
+        if cached is _BAD_FRAME:
+            continue
+        if cached is not None:
+            pil, pil_uuid = cached
+            user_content.append(
+                {
+                    "type": "image_pil",
+                    "image_pil": pil,
+                    "uuid": pil_uuid,
+                }
+            )
+        else:
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"},
+                }
+            )
+
+    if len(audio_buffer) &gt; 0:
+        wav_b64 = self._pcm_to_wav_b64(bytes(audio_buffer))
+        user_content.append(
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": wav_b64,
+                    "format": "wav",
+                },
+            }
+        )
+
+    if query_text:
+        user_content.append({"type": "text", "text": query_text})
+
+    user_message: dict[str, Any] = {"role": "user", "content": user_content}
+
+    messages: list[dict[str, Any]] = []
+    if config.system_prompt:
+        messages.append({"role": "system", "content": config.system_prompt})
+
+    recent_history = message_history[-2:] if len(message_history) &gt; 2 else message_history
+    for hist_msg in recent_history:
+        messages.append(self._text_only_message(hist_msg))
+
+    messages.append(user_message)
+
+    return messages, user_message</code></pre>
+        <ol class="explain">
+          <li>先按 <code>config.num_frames</code> 对 session frame buffer 做采样；不是每一帧都进模型。</li>
+          <li>buffer 较长时，用 stride 采样，并强制保留最新一帧。</li>
+          <li>每个采样帧优先使用预热好的 PIL 对象和 uuid，这能减少 query 时解码成本，也方便多模态 cache 命中。</li>
+          <li>预热失败的帧会跳过，不会进入 prompt。</li>
+          <li>没有预热对象时退回 <code>image_url</code> data URI，仍然是 OpenAI-style content block。</li>
+          <li>如果当前 query 带音频 buffer，就把 PCM16 包成 WAV base64，作为 <code>input_audio</code> content block。</li>
+          <li>query 文本作为 <code>{"type": "text"}</code> 附在最后，所以模型看到的是“帧 + 可选音频 + 文本问题”。</li>
+          <li>历史消息只保留最近一轮，并且通过 <code>_text_only_message</code> 去掉历史里的图片/音频，避免 prompt 太长和重复多模态编码。</li>
+          <li>返回的 <code>messages</code> 会被包装成 <code>ChatCompletionRequest</code>，这一步之后就走普通 chat/render/preprocess 管线。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">vLLM-Omni</span> 类 <code>OmniStreamingVideoHandler</code>，方法 <code>_process_query_engine</code> 的输出循环核心</p>
+        <pre><code class="language-python">result_gen = self._engine_client.generate(
+    prompt=engine_prompt,
+    request_id=request_id,
+    output_modalities=config.modalities,
+)
+
+async for output in result_gen:
+    if interrupt_event.is_set():
+        if not interrupted:
+            logger.info("Generation interrupted — draining")
+            interrupted = True
+        continue
+
+    if not isinstance(output, OmniRequestOutput):
+        continue
+
+    out_type = getattr(output, "final_output_type", "text")
+
+    if out_type == "audio":
+        if streaming and not text_done_sent:
+            full_text = "".join(text_parts)
+            await websocket.send_json({"type": "response.text.done", "text": full_text})
+            text_done_sent = True
+
+        if t_first_audio is None:
+            t_first_audio = _time.monotonic()
+        audio_chunk_count += 1
+        if streaming:
+            b64, audio_chunks_drained = self._extract_audio_delta_b64(
+                output,
+                audio_chunks_drained,
+            )
+            if b64:
+                await websocket.send_json(
+                    {
+                        "type": "response.audio.delta",
+                        "data": b64,
+                        "format": "wav",
+                    }
+                )
+        else:
+            audio_data = self._get_audio_data(output)
+            if audio_data is not None:
+                if isinstance(audio_data, list):
+                    audio_tail_tensors = list(audio_data)
+                else:
+                    audio_tail_tensors = [audio_data]
+    else:
+        delta_text, previous_text = self._extract_text_delta(
+            output,
+            previous_text,
+        )
+        if delta_text:
+            if t_first_text is None:
+                t_first_text = _time.monotonic()
+            text_parts.append(delta_text)
+            if streaming:
+                await websocket.send_json({"type": "response.text.delta", "delta": delta_text})</code></pre>
+        <ol class="explain">
+          <li><code>engine_client.generate</code> 这里拿到的是一次 query 的 engine prompt，不是逐帧 streaming input。</li>
+          <li><code>output_modalities=config.modalities</code> 决定输出 text、audio 或两者。</li>
+          <li>如果 query 被新 query 中断，循环继续 drain engine output，但不再发给客户端，避免后台 request 半途打断造成资源状态混乱。</li>
+          <li>只处理 <code>OmniRequestOutput</code>，其他控制消息跳过。</li>
+          <li><code>final_output_type</code> 区分文本和音频输出。</li>
+          <li>如果先进入 audio 输出，并且 text done 还没发，先发 <code>response.text.done</code>，保证客户端协议顺序稳定。</li>
+          <li>视频 stream 的音频输出分两种：wire-level async chunk 打开时，调用 <code>_extract_audio_delta_b64</code> 只发新增音频；关闭时，先缓存尾部，最后合并发送。</li>
+          <li>文本输出通过 <code>_extract_text_delta</code> 从累计文本里切 delta，再发 <code>response.text.delta</code>。</li>
+          <li>这里的 text/audio streaming 是输出 streaming；输入 video/audio/text 已经在 query 开始前被快照进 prompt。</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="qwen3-mm">
+      <h2>6. Qwen3-Omni 多模态处理器：audio / image / video 怎么进 Thinker</h2>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeThinkerMultiModalProcessor</code>，方法 <code>_call_hf_processor</code></p>
+        <pre><code class="language-python">def _call_hf_processor(
+    self,
+    prompt: str,
+    mm_data: Mapping[str, object],
+    mm_kwargs: Mapping[str, object],
+    tok_kwargs: Mapping[str, object],
+) -&gt; BatchFeature:
+    mm_data = dict(mm_data)
+    audios = mm_data.pop("audios", [])
+
+    def pad_to_hop_length(x: np.ndarray, hop_length: int) -&gt; np.ndarray:
+        length = x.shape[-1]
+        if length % hop_length != 0:
+            pad_length = hop_length - (length % hop_length)
+            x = np.pad(x, (0, pad_length), mode="constant", constant_values=0)
+        return x
+
+    feature_extractor = self.info.get_feature_extractor(**mm_kwargs)
+    hop_length = feature_extractor.hop_length
+    if audios:
+        mm_data["audio"] = [
+            pad_to_hop_length(audio, hop_length)
+            if isinstance(audio, np.ndarray)
+            else (pad_to_hop_length(audio[0], hop_length), audio[1])
+            for audio in audios
+        ]
+
+        mm_kwargs = dict(mm_kwargs)
+        tok_kwargs = dict(tok_kwargs)
+        mm_kwargs["audio_kwargs"] = dict(mm_kwargs.get("audio_kwargs") or {})
+        mm_kwargs["text_kwargs"] = dict(mm_kwargs.get("text_kwargs") or {})
+        if Version(TRANSFORMERS_VERSION) &lt; Version("4.58.0"):
+            audio_sample_rate = mm_kwargs.pop("audio_sample_rate", None)
+
+            mm_kwargs["audio_kwargs"].setdefault("truncation", mm_kwargs.pop("truncation", False))
+            mm_kwargs["text_kwargs"].setdefault("truncation", tok_kwargs.pop("truncation", False))
+
+            if audio_sample_rate is not None:
+                expected_sr = feature_extractor.sampling_rate
+                if audio_sample_rate != expected_sr:
+                    logger.warning(
+                        "[%s] audio_sample_rate mismatch: user provided %dHz "
+                        "but model expects %dHz. Ignoring user value. "
+                        "vLLM's audio loader already resampled to %dHz.",
+                        self.__class__.__name__,
+                        audio_sample_rate,
+                        expected_sr,
+                        expected_sr,
+                    )
+                else:
+                    mm_kwargs["audio_kwargs"]["audio_sample_rate"] = audio_sample_rate
+
+    hf_inputs = super()._call_hf_processor(
+        prompt=prompt,
+        mm_data=mm_data,
+        mm_kwargs=mm_kwargs,
+        tok_kwargs=tok_kwargs,
+    )
+
+    if (
+        "audio_feature_lengths" in hf_inputs
+        and "feature_attention_mask" in hf_inputs
+        and (audios := mm_data.get("audio", []))
+    ):
+        audio_num_frames = []
+        for _, audio in enumerate(audios):
+            audio_length = len(audio[0]) if isinstance(audio, tuple) else len(audio)
+            num_frame = (
+                (audio_length // hop_length) if audio_length % hop_length == 0 else (audio_length // hop_length - 1)
+            )
+            if mm_kwargs.get("truncation", False):
+                num_frame = min(num_frame, feature_extractor.n_samples // hop_length)
+            audio_num_frames.append(num_frame)
+        hf_inputs["feature_attention_mask"] = [torch.ones(num_frame) for num_frame in audio_num_frames]
+        hf_inputs["audio_feature_lengths"] = torch.tensor(audio_num_frames)
+    return hf_inputs</code></pre>
+        <ol class="explain">
+          <li>方法收到 renderer/preprocessor 汇总后的 <code>prompt</code>、<code>mm_data</code>、<code>mm_kwargs</code>、tokenizer kwargs。</li>
+          <li>先把 <code>audios</code> 从 <code>mm_data</code> 里弹出，因为 Qwen3-Omni HF processor 期望字段名是 <code>audio</code>。</li>
+          <li><code>pad_to_hop_length</code> 把音频长度补齐到 feature extractor hop length 的整数倍，保证音频 token/frame 长度可预测。</li>
+          <li>如果有音频，统一转成 <code>mm_data["audio"]</code>，并保留 tuple 形式音频的采样率/元信息。</li>
+          <li>旧 transformers 版本下，把 truncation 拆到 <code>audio_kwargs</code> 和 <code>text_kwargs</code>，避免 HF processor 参数冲突。</li>
+          <li>如果用户传了 audio sample rate，只在它等于模型 expected sample rate 时向下传；否则忽略并 warning，因为 vLLM loader 已经做过重采样。</li>
+          <li>随后调用父类 processor 处理 image/video/audio/text，生成 HF <code>BatchFeature</code>。</li>
+          <li>最后修正音频的 <code>feature_attention_mask</code> 和 <code>audio_feature_lengths</code>，让模型只注意真实音频帧，不把 padding 当有效音频。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeThinkerMultiModalProcessor</code>，方法 <code>_maybe_apply_prompt_updates</code></p>
+        <pre><code class="language-python">def _maybe_apply_prompt_updates(
+    self,
+    mm_items: MultiModalDataItems,
+    prompt_ids: list[int],
+    mm_kwargs: MultiModalKwargsItems,
+    mm_prompt_updates: MultiModalPromptUpdates,
+    is_update_applied: bool,
+) -&gt; tuple[list[int], str, Mapping[str, list[PlaceholderFeaturesInfo]]]:
+    """
+    Qwen3-Omni reimplements this function to handle `use_audio_in_video`.
+    """
+    mm_item_counts = mm_items.get_all_counts()
+    self._validate_mm_kwargs(mm_kwargs, mm_item_counts)
+
+    use_audio_in_video = False
+    if "video" in mm_kwargs:
+        non_none_items = [item for item in mm_kwargs["video"] if item is not None]
+        if non_none_items:
+            use_audio_in_video = any(item["use_audio_in_video"].data for item in non_none_items)
+        elif "audio" in mm_prompt_updates:
+            tokenizer = self.info.get_tokenizer()
+            audio_pad_id = tokenizer.convert_tokens_to_ids("&lt;|audio_pad|&gt;")
+            use_audio_in_video = audio_pad_id not in prompt_ids
+        if any(item is None for item in mm_kwargs["video"]):
+            video_token_id = self.info.get_hf_config().video_token_id
+            audio_token_id = self.info.get_hf_config().audio_token_id
+            video_audio_item_num = sum(id in (video_token_id, audio_token_id) for id in prompt_ids)
+            audio_updates_num = len(mm_prompt_updates.get("audio", []))
+            video_updates_num = len(mm_prompt_updates.get("video", []))
+            if video_audio_item_num != video_updates_num + audio_updates_num:
+                use_audio_in_video = True
+
+    if is_update_applied:
+        mm_placeholders = self._find_mm_placeholders(
+            prompt_ids,
+            mm_prompt_updates,
+        )
+        self._validate_mm_placeholders(
+            mm_placeholders,
+            mm_item_counts,
+        )
+    else:
+        if use_audio_in_video and "audio" in mm_prompt_updates:
+            filtered_updates = {k: v for k, v in mm_prompt_updates.items() if k != "audio"}
+            prompt_ids, mm_placeholders = self._apply_prompt_updates(
+                prompt_ids,
+                filtered_updates,
+            )
+            mm_placeholders = self._derive_audio_from_video_placeholders(mm_placeholders, mm_prompt_updates)
+        else:
+            prompt_ids, mm_placeholders = self._apply_prompt_updates(
+                prompt_ids,
+                mm_prompt_updates,
+            )
+
+        self._validate_mm_placeholders(
+            mm_placeholders,
+            mm_item_counts,
+        )
+
+    return prompt_ids, mm_placeholders</code></pre>
+        <ol class="explain">
+          <li>这个方法决定多模态 placeholder token 怎么写进 prompt ids，并且是 Qwen3-Omni 处理 video+audio 交织的关键。</li>
+          <li>先统计每种模态 item 数量，然后校验 <code>mm_kwargs</code> 与 item 数是否匹配。</li>
+          <li>默认 <code>use_audio_in_video=False</code>。只有看到 video kwargs 或 cached video 特征时，才判断是否需要把 audio 嵌到 video token 序列里。</li>
+          <li>正常非缓存 video item 可以直接读取 <code>item["use_audio_in_video"].data</code>。</li>
+          <li>如果 video item 都来自 cache，则通过 prompt 里有没有 <code>&lt;|audio_pad|&gt;</code> 来推断 audio 是否已经嵌在 video tokens 中。</li>
+          <li>缓存场景还会比较 prompt 里的 video/audio token 数量与 prompt updates 数量；不一致时倾向认为是 audio-in-video。</li>
+          <li>如果 prompt updates 已经应用过，只查找并校验 placeholders。</li>
+          <li>如果还没应用，并且 <code>use_audio_in_video</code> 为真，就过滤掉独立 audio update，只应用 video update，再用 <code>_derive_audio_from_video_placeholders</code> 推导 audio placeholder。</li>
+          <li>否则走普通路径，把 audio/image/video updates 都应用到 prompt。</li>
+          <li>返回的是更新后的 <code>prompt_ids</code> 和各模态 placeholder 位置信息，后续 embedding merge 依赖它们。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeThinkerForConditionalGeneration</code>，方法 <code>embed_multimodal</code></p>
+        <pre><code class="language-python">def embed_multimodal(self, **kwargs: object) -&gt; MultiModalEmbeddings | None:
+    mm_input_by_modality = self._parse_and_validate_multimodal_inputs(**kwargs)
+    if not mm_input_by_modality:
+        return []
+
+    multimodal_embeddings: tuple[torch.Tensor, ...] = ()
+
+    for modality in mm_input_by_modality:
+        multimodal_input = mm_input_by_modality[modality]
+        if modality == "image":
+            image_embeddings = self._process_image_input(multimodal_input)
+            multimodal_embeddings += tuple(image_embeddings)
+        if modality == "video":
+            video_embeddings = self._process_video_input(multimodal_input)
+            multimodal_embeddings += tuple(video_embeddings)
+        if modality == "audio":
+            audio_embeddings = self._process_audio_input(multimodal_input)
+            multimodal_embeddings += tuple(audio_embeddings)
+    return multimodal_embeddings</code></pre>
+        <ol class="explain">
+          <li>先从 kwargs 里解析并校验多模态输入，得到按模态分组的结构。</li>
+          <li>没有多模态输入时返回空 list，后面走纯文本 embedding。</li>
+          <li><code>multimodal_embeddings</code> 是 tuple，顺序很重要，因为后面要按 prompt placeholder 顺序 merge。</li>
+          <li>image 走视觉 image processor；video 走视频 processor；audio 走音频 encoder。</li>
+          <li>每个模态的结果都追加到同一个 tuple，最终交给 <code>embed_input_ids</code> 合并到文本 token embedding 里。</li>
+        </ol>
+      </div>
+
+      <div class="method">
+        <p class="method-title"><span class="tag">Qwen3-Omni</span> 类 <code>Qwen3OmniMoeThinkerForConditionalGeneration</code>，方法 <code>embed_input_ids</code> 的多模态合并核心</p>
+        <pre><code class="language-python">inputs_embeds = self._embed_text_input_ids(
+    input_ids,
+    self.language_model.embed_input_ids,
+    is_multimodal=is_multimodal,
+)
+
+if multimodal_embeddings is None or len(multimodal_embeddings) == 0:
+    return inputs_embeds
+
+is_mm_device = is_multimodal.to(device=input_ids.device, non_blocking=True)
+video_token_id = self.config.video_token_id
+audio_token_id = self.config.audio_token_id
+is_video = is_mm_device &amp; (input_ids == video_token_id)
+is_audio = is_mm_device &amp; (input_ids == audio_token_id)
+num_video = is_video.sum().item()
+num_audio = is_audio.sum().item()
+
+is_interleaved = check_interleaved_audio_video(is_video, is_audio, num_video, num_audio)
+
+if is_interleaved:
+    return merge_interleaved_embeddings(
+        inputs_embeds,
+        multimodal_embeddings,
+        is_video,
+        is_audio,
+        is_mm_device,
+        num_video,
+        num_audio,
+    )
+
+return super().embed_input_ids(
+    input_ids,
+    multimodal_embeddings=multimodal_embeddings,
+    is_multimodal=is_multimodal,
+)</code></pre>
+        <ol class="explain">
+          <li>先把所有 token ids 都用语言模型 embedding 层转成文本 embedding。</li>
+          <li>没有多模态 embedding 时直接返回文本 embedding。</li>
+          <li><code>is_multimodal</code> 是 placeholder mask，先搬到和 input ids 相同设备。</li>
+          <li>通过 Qwen3 config 里的 video/audio token id，分别找出 video placeholder 和 audio placeholder。</li>
+          <li><code>check_interleaved_audio_video</code> 判断 prompt 里 video/audio token 是否交织排列。</li>
+          <li>如果是 audio-in-video 交织模式，用 <code>merge_interleaved_embeddings</code> 按 video/audio mask 精确合并。</li>
+          <li>否则走父类标准合并逻辑，把多模态 embeddings 按普通 placeholder 顺序塞回文本 embedding 序列。</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="summary">
+      <h2>7. 读码结论</h2>
+      <ul>
+        <li><code>/v1/realtime</code> 的音频输入是真正的 engine streaming input：append 入队，commit 启动，Qwen3 按 5 秒 segment yield <code>StreamingInput</code>。</li>
+        <li><code>AsyncOmni._add_streaming_input_request</code> 是 add request 与 streaming update 的分界点：第一片 <code>resumable=True</code> add，后续 <code>resumable=True</code> update，结束 <code>resumable=False</code> update。</li>
+        <li>文本输入本身通常是一次 prompt 的一部分；文本“流式”主要是输出侧 <code>response.text.delta</code> 或 chat SSE delta。</li>
+        <li><code>/v1/video/chat/stream</code> 是 websocket 层流式收帧：每次 <code>video.query</code> 把当前帧 buffer、音频 buffer、query text 快照成一次 ChatCompletionRequest。</li>
+        <li>Qwen3-Omni Thinker 的 multimodal processor 负责把 audio/image/video placeholder、feature lengths、interleaved audio-in-video 关系处理正确。</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="./nav.js"></script>
+</body>
+</html>
