@@ -198,6 +198,7 @@
         <li><a href="#seq-input">流式输入时序</a></li>
         <li><a href="#seq-async">async_chunk 时序</a></li>
         <li><a href="#walkthrough">代码走读主线</a></li>
+        <li><a href="#class-deepdive">类级代码拆解</a></li>
         <li><a href="#state">关键状态与不变量</a></li>
         <li><a href="#tests">测试覆盖与读码顺序</a></li>
       </ol>
@@ -576,8 +577,232 @@ payload_data.meta.is_segment_finished = is_segment_finished</code></pre>
       <p><code>OmniGPUModelRunner</code> 遇到同一个 <code>req_id</code> 再次出现在 <code>scheduled_new_reqs</code> 时，走 <code>_update_streaming_request()</code>；PR #3614 把 <code>_update_streaming_input_additional_info()</code> 简化成只设置 <code>meta.num_processed_tokens = 0</code> 和 <code>meta.resumable = True</code>。Qwen3 Talker 的 <code>talker_preprocess()</code> 看到 <code>meta.resumable</code> 时，不再用 runner 的 <code>num_computed_tokens</code> 覆盖 <code>meta.num_processed_tokens</code>，避免 streaming prefill 被错误当成已处理过。</p>
     </section>
 
+    <section id="class-deepdive">
+      <h2>7. 类级代码拆解</h2>
+      <p>下面按真实调用链拆类。读的时候注意两条边界：HTTP/WebSocket 入口只负责把输入变成 <code>StreamingInput</code>，engine/orchestrator/scheduler 才负责 request 生命周期；async_chunk 的 connector 只传 stage 间 payload，不负责决定用户级 request 是否结束。</p>
+
+      <h3>7.1 上游 <code>RealtimeConnection</code>：WebSocket 会话状态机</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm/entrypoints/speech_to_text/realtime/connection.py</code></td></tr>
+        <tr><th>类职责</th><td>管理 websocket lifecycle、session validation、音频 queue、generation task。它是协议层，不知道 Omni 多 stage，也不知道 async_chunk。</td></tr>
+        <tr><th>关键字段</th><td><code>audio_queue</code> 存 PCM float32 chunk 或 <code>None</code> sentinel；<code>generation_task</code> 防止同一连接重复启动 generation；<code>_is_model_validated</code> 要求先 <code>session.update</code>。</td></tr>
+        <tr><th>关键方法</th><td><code>handle_event()</code> 分发 <code>session.update</code> / <code>input_audio_buffer.append</code> / <code>input_audio_buffer.commit</code>；<code>start_generation()</code> 创建 <code>audio_stream_generator()</code> 和 <code>input_stream</code>；<code>_run_generation()</code> 上游默认只发 transcription text。</td></tr>
+        <tr><th>输入输出</th><td>输入是 websocket JSON 和 base64 PCM16；输出是 <code>TranscriptionDelta</code> / <code>TranscriptionDone</code>。Omni 子类扩展 audio delta。</td></tr>
+      </table>
+
+      <h3>7.2 Omni <code>RealtimeConnection</code>：把 Omni 输出转成 text/audio delta</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/entrypoints/openai/realtime_connection.py</code></td></tr>
+        <tr><th>继承关系</th><td>继承上游 <code>VllmRealtimeConnection</code>，入口事件仍复用上游，主要重写 <code>_run_generation()</code> 和 audio 提取逻辑。</td></tr>
+        <tr><th>关键字段</th><td><code>self.engine</code> cast 成 <code>AsyncOmni</code>；<code>_realtime_audio_ref</code> 记录已发送的累计 waveform 前缀。</td></tr>
+        <tr><th>关键方法</th><td><code>_extract_audio_chunks()</code> 从 <code>output.multimodal_output</code> 里取 <code>audio</code> 或 <code>model_outputs</code>；<code>_raw_waveform_to_deltas()</code> 判断当前 audio 是累计波形还是增量波形；<code>_pcm16_b64()</code> 转 OpenAI realtime 事件需要的 PCM16 base64。</td></tr>
+        <tr><th>状态机细节</th><td><code>stage_id == 0</code> 的 text delta 会发 <code>TranscriptionDelta</code>，并把新 token ids 放进 <code>input_stream</code>。audio delta 不限定 stage，只要 <code>multimodal_output</code> 里有音频就发 <code>response.audio.delta</code>。</td></tr>
+        <tr><th>收尾</th><td>正常结束后发 <code>TranscriptionDone</code>，如果发过音频再发 <code>response.audio.done</code>；异常或断连也会尽量发 terminal audio done，避免客户端等待。</td></tr>
+      </table>
+
+      <h3>7.3 <code>OpenAIServingRealtime</code>：音频流到 <code>StreamingInput</code></h3>
+      <table>
+        <tr><th>文件</th><td>上游 <code>vllm/entrypoints/speech_to_text/realtime/serving.py</code></td></tr>
+        <tr><th>类职责</th><td>把 websocket 层的 <code>audio_stream</code> 变成 engine 可消费的 <code>AsyncGenerator[StreamingInput]</code>。</td></tr>
+        <tr><th>关键方法</th><td><code>transcribe_realtime()</code> 调用模型类的 <code>buffer_realtime_audio(audio_stream, input_stream, model_config)</code>，再用 renderer 把模型 prompt 渲染为 engine input，最后 <code>yield StreamingInput(prompt=engine_input)</code>。</td></tr>
+        <tr><th>边界</th><td>这里不切音频、不做 session continuation；切片策略在模型类 <code>buffer_realtime_audio</code> 里。</td></tr>
+      </table>
+
+      <h3>7.4 <code>Qwen3OmniMoeForConditionalGeneration</code>：模型级切片与 Talker 预处理</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/model_executor/models/qwen3_omni/qwen3_omni.py</code></td></tr>
+        <tr><th>类职责</th><td>同一个 wrapper 根据 <code>model_stage</code> 承载 Thinker、Talker、Code2Wav。对 realtime input，它提供类方法 <code>buffer_realtime_audio()</code>。</td></tr>
+        <tr><th><code>buffer_realtime_audio()</code></th><td>创建 <code>Qwen3ASRRealtimeBuffer(segment_duration_s=5.0)</code>；构造固定 chat 模板 <code>&lt;|im_start|&gt;user\n{audio_placeholder}...</code>；<code>async_chunk=true</code> 时每读到完整 segment 就 yield 一个带 <code>multi_modal_data={"audio": segment}</code> 的 <code>TokensPrompt</code>；最后 <code>flush()</code> 剩余音频。</td></tr>
+        <tr><th><code>Qwen3ASRRealtimeBuffer</code></th><td>音频切片状态机。<code>append()</code> 累积输入波形；达到 <code>segment_duration_s</code> 后吐出一个 segment；<code>flush()</code> 在 final sentinel 后吐出剩余尾巴。这里的 segment 边界就是后面 <code>AsyncOmni</code> 第一片 <code>add_request</code>、后续片 <code>streaming_update</code> 的来源。</td></tr>
+        <tr><th>为什么看 <code>async_chunk</code></th><td>PR 版本里 <code>async_chunk=false</code> 不在中间 yield segment，避免 full-payload 模式把每片当 fresh decode 造成重复回答/重复音频。</td></tr>
+        <tr><th><code>talker_preprocess()</code></th><td>Talker prefill 时会参考 payload <code>meta</code>。PR 加了 <code>request_resumable = meta.get("resumable", False)</code>，resumable 时不让 runner 的 <code>num_computed_tokens</code> 覆盖 <code>meta.num_processed_tokens</code>。</td></tr>
+      </table>
+
+      <h3>7.5 <code>AsyncOmni</code>：用户态 generate 协调器</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/entrypoints/async_omni.py</code></td></tr>
+        <tr><th>类职责</th><td>对外提供统一 <code>generate()</code> API，隐藏多 stage orchestrator。它拥有 request 级 <code>ClientRequestState</code>，负责把 final output queue 里的消息 yield 给调用者。</td></tr>
+        <tr><th><code>generate()</code></th><td>先解析 sampling params、final stage、metrics；如果 <code>prompt</code> 是 <code>AsyncGenerator</code>，进入 streaming input 分支，否则普通 <code>add_request_async()</code>。</td></tr>
+        <tr><th><code>_add_streaming_input_request()</code></th><td>后台 task 消费 <code>input_stream</code>。第一片调用 <code>engine.add_request_async(..., resumable=True)</code>，后续片调用 <code>engine.add_streaming_update_async(..., resumable=True)</code>。finally 中发 final sentinel：已有首片则 <code>streaming_update(resumable=False)</code>，否则 <code>add_request(resumable=False)</code>。</td></tr>
+        <tr><th>约束</th><td><code>_validate_streaming_input_sampling_params()</code> 限制 <code>n == 1</code>、非 <code>FINAL_ONLY</code>、无 stop strings，保证 delta 和 continuation 状态机可控。</td></tr>
+      </table>
+
+      <h3>7.6 <code>AsyncOmniEngine</code> 与 <code>StageSubmissionMessage</code>：入队消息格式</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/engine/async_omni_engine.py</code>，<code>vllm_omni/engine/messages.py</code></td></tr>
+        <tr><th><code>StageSubmissionMessage</code></th><td>msgspec struct，<code>type</code> 只有 <code>add_request</code> 或 <code>streaming_update</code>；携带 <code>request_id</code>、预处理后的 <code>prompt</code>、原始 <code>original_prompt</code>、<code>sampling_params_list</code>、<code>final_stage_id</code>、耗时字段。</td></tr>
+        <tr><th><code>_build_add_request_message()</code></th><td>做 stage-0 input processing：注入 global id，scope 多模态 cache 到 stage-0 replica，调用 <code>input_processor.process_inputs(..., resumable=resumable)</code>，再升级为 <code>OmniRequest</code> 并写入 <code>external_req_id</code>。</td></tr>
+        <tr><th><code>add_request_async()</code></th><td>同步构造 <code>StageSubmissionMessage(type="add_request")</code>，放入 orchestrator 的 request queue。</td></tr>
+        <tr><th><code>add_streaming_update_async()</code></th><td>构造同样的 message，但 <code>message_type="streaming_update"</code>。这让 Orchestrator 能区别“新 session”与“已有 session continuation”。</td></tr>
+      </table>
+
+      <h3>7.7 <code>OrchestratorRequestState</code> / <code>StreamingInputState</code>：Orchestrator 侧会话记忆</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/engine/orchestrator.py</code></td></tr>
+        <tr><th><code>OrchestratorRequestState</code></th><td>每个 logical request 一份。保存原始 prompt、每 stage sampling params、final stage、stage submit 时间、mm features、PD prefill output、pipeline timings，以及 <code>streaming</code> 状态。</td></tr>
+        <tr><th><code>StreamingInputState</code></th><td><code>enabled</code> 表示这是 streaming input；<code>segment_finished</code> 表示当前输入片已结束；<code>new_prompt_len_snapshot</code> 记录 Stage-0 新片 prompt 长度；<code>bridge_states</code> 给 Qwen3 processor 存跨 segment 的游标。</td></tr>
+        <tr><th>关键点</th><td>这是 Orchestrator 级别的“事实来源”。Scheduler 产出的 <code>EngineCoreOutput.is_segment_finished</code> 和 <code>new_prompt_len_snapshot</code> 会被写回这里，下游 <code>process_engine_inputs(..., streaming_context=req_state.streaming)</code> 再读取。</td></tr>
+      </table>
+
+      <h3>7.8 <code>Orchestrator</code>：跨 stage request 状态机</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/engine/orchestrator.py</code></td></tr>
+        <tr><th><code>_handle_add_request()</code></th><td>创建 <code>OrchestratorRequestState</code>，用 <code>prompt.resumable</code> 设置 <code>streaming.enabled</code>，提交 Stage-0。PR #3614 在 <code>async_chunk</code> 且存在下游 stage 时调用 <code>_prewarm_async_chunk_stages()</code>。</td></tr>
+        <tr><th><code>_handle_streaming_update()</code></th><td>查已有 request state，更新 sampling params，标记 streaming enabled，调用 Stage-0 <code>submit_update()</code>。PR #3614 也在这里 prewarm downstream，让下一片可以继续同一条 async_chunk 管线。</td></tr>
+        <tr><th><code>_orchestration_loop()</code></th><td>轮询 stage raw output。对每个 raw <code>EngineCoreOutput</code>，把 <code>is_segment_finished</code> 和 <code>new_prompt_len_snapshot</code> 同步到 <code>req_state.streaming</code>。</td></tr>
+        <tr><th><code>_route_output()</code></th><td>如果当前 stage 是 final output，发给前端 queue；如果不是 final 且非 async_chunk，遇到 <code>finished</code> 或 streaming segment finished 时显式 <code>_forward_to_next_stage()</code>。async_chunk 模式不走这条显式转发，数据由 connector 传。</td></tr>
+        <tr><th><code>_forward_to_next_stage()</code></th><td>non-async_chunk 的核心桥：调用下一 stage client 的 <code>process_engine_inputs()</code>，把 source output 转成下一 stage prompt；streaming session 的中间 update 用 <code>resumable=True</code>，terminal update 用 <code>resumable=False</code>。</td></tr>
+        <tr><th><code>_prewarm_async_chunk_stages()</code></th><td>async_chunk 专用：给 Stage-1/Stage-2 提前提交 placeholder prompt。Talker prompt 长度用 <code>compute_talker_prompt_ids_length(prompt_token_ids)</code> 估计；PR #3614 把 downstream request 的 <code>resumable</code> 设为 stage-0 request 的 resumable。</td></tr>
+      </table>
+
+      <h3>7.9 <code>StagePool</code>：stage 复制体选择和 submit 边界</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/engine/stage_pool.py</code></td></tr>
+        <tr><th>类职责</th><td>管理一个 logical stage 的一个或多个 replica。Orchestrator 不直接操作 engine client，而是通过 pool 做 replica 选择、affinity、submit、poll。</td></tr>
+        <tr><th><code>submit_initial()</code></th><td>首次提交 request；会绑定 request 到某个 replica，之后同 request 的 update/poll 尽量保持 affinity。</td></tr>
+        <tr><th><code>submit_update()</code></th><td>streaming update 或 downstream continuation 走这里。语义是“同一 request id 的已有 stage request 更新输入”，不是新建另一条 request。</td></tr>
+        <tr><th>为什么重要</th><td>streaming input 必须复用同一个 stage-local request，不能让下一片被 load balancing 到另一个 replica，否则 KV/cache/request state 都对不上。</td></tr>
+      </table>
+
+      <h3>7.10 <code>OmniRequest</code> / <code>OmniStreamingUpdate</code>：Request 扩展字段</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/request.py</code></td></tr>
+        <tr><th><code>OmniRequest</code></th><td>继承 vLLM <code>Request</code>，增加 <code>prompt_embeds_payload</code>、<code>external_req_id</code>、<code>additional_information</code>。<code>from_engine_core_request()</code> 把 engine request 的 <code>resumable</code>、prompt embeds、additional info 都带到 scheduler request。</td></tr>
+        <tr><th><code>external_req_id</code></th><td>connector key 和 orchestrator logical request 对齐依赖它。内部 request id 可以被 input processor 改写，external id 必须稳定。</td></tr>
+        <tr><th><code>OmniStreamingUpdate</code></th><td>只在 <code>request.resumable</code> 时从 Request 构造，带 <code>mm_features</code>、<code>prompt_token_ids</code>、<code>max_tokens</code>、<code>arrival_time</code>、<code>sampling_params</code>、<code>additional_information</code>。它是 scheduler 更新 session 的轻量包。</td></tr>
+      </table>
+
+      <h3>7.11 <code>OmniARScheduler</code>：Thinker/Talker 类 AR stage 的 continuation 规则</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/core/sched/omni_ar_scheduler.py</code></td></tr>
+        <tr><th>类职责</th><td>在 vLLM AR scheduler 上增加 Omni 的 KV transfer、connector chunk、streaming session 处理。</td></tr>
+        <tr><th><code>schedule()</code></th><td>每轮先 <code>_consume_pending_connector_output()</code>，再处理 async_chunk 的 <code>chunk_transfer_adapter.process_pending_chunks()</code>。这样 downstream request 只有在 connector chunk 到达后才会被放回 waiting/running。</td></tr>
+        <tr><th><code>update_from_output()</code></th><td>模型跑完后更新 request token 状态。若 request stopped，设置 <code>is_segment_finished=True</code>；如果 <code>_handle_stopped_request()</code> 返回 not finished，说明只是 streaming segment 结束，会清理 async placeholders 和 output ids，等待下一片。</td></tr>
+        <tr><th><code>_update_request_as_session()</code></th><td>Stage-0 continuation 的核心。记录 <code>_new_prompt_len_snapshot[req_id]</code>；如果有 <code>num_output_placeholders</code>，把未确认 token 回退；stage-0 走 upstream 逻辑拼接旧 prompt、已确认输出、新 prompt；downstream async_chunk stage 只恢复 WAITING，不改 prompt。</td></tr>
+        <tr><th><code>save_async()</code> 调用点</th><td>在有 <code>pooler_output</code> 或 stopped output 时调用 <code>chunk_transfer_adapter.save_async(pooler_output, request, is_segment_finished)</code>，把 Thinker/Talker 输出异步送下游。</td></tr>
+      </table>
+
+      <h3>7.12 <code>OmniGenerationScheduler</code>：Code2Wav/generation stage 的替换语义</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/core/sched/omni_generation_scheduler.py</code></td></tr>
+        <tr><th>类职责</th><td>给 diffusion/generation 类 stage 做“一次输入一轮执行”的调度。Code2Wav 收到 codec chunk 后通常一次生成一个 waveform chunk。</td></tr>
+        <tr><th><code>schedule()</code></th><td>async_chunk 时如果 request prompt 为空，就不让 base scheduler 用 placeholder 空跑；先等待 connector chunk。收到 chunk 后按当前 <code>prompt_token_ids</code> 分配 slots。</td></tr>
+        <tr><th><code>update_from_output()</code></th><td>如果 connector 已经 done receiving chunks 且 request 输入 token 都处理完，就把 request 放入 <code>_pending_finish_reqs</code>，输出 terminal <code>EngineCoreOutput</code>。</td></tr>
+        <tr><th><code>_update_request_as_session()</code></th><td>和 AR 不同，它直接清空旧 tokens，用 update 的 prompt 替换整条 prompt，<code>num_computed_tokens=0</code>，刷新 block hashes。对 generation stage，这比追加 prompt 更符合“下一段 codec 输入重新生成一段 audio”的语义。</td></tr>
+      </table>
+
+      <h3>7.13 <code>OmniSchedulerMixin</code> / <code>OmniSchedulerOutput</code>：scheduler 与 runner 的附加信号</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/core/sched/omni_scheduler_mixin.py</code>，<code>vllm_omni/core/sched/output.py</code></td></tr>
+        <tr><th><code>OmniSchedulerMixin</code></th><td>抽出 AR/generation 共用逻辑：消费 runner 的 <code>omni_connector_output</code>、处理 full-payload timeout、包装 scheduler output。</td></tr>
+        <tr><th><code>_consume_pending_connector_output()</code></th><td>把上一轮 model runner output 中的 connector readiness metadata 喂给 input coordinator。async_chunk 的 adapter 路径主要用自己的 chunk adapter，但 runner->scheduler 的信号仍通过 <code>omni_connector_output</code> 携带。</td></tr>
+        <tr><th><code>OmniSchedulerOutput</code></th><td>继承 vLLM <code>SchedulerOutput</code>，增加 <code>finished_requests_needing_kv_transfer</code> 和 <code>pending_input_registrations</code>。后者让 runner 知道哪些 request 要注册 connector recv。</td></tr>
+      </table>
+
+      <h3>7.14 <code>MetaStruct</code> / <code>OmniPayloadStruct</code>：stage 间 payload schema</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/data_entry_keys.py</code></td></tr>
+        <tr><th><code>MetaStruct</code></th><td>控制字段集中在这里：<code>finished</code>、<code>is_segment_finished</code>、<code>left_context_size</code>、<code>num_processed_tokens</code>、<code>codec_chunk_frames</code>、<code>code_flat_numel</code>、<code>omni_final_stage_id</code> 等。</td></tr>
+        <tr><th><code>OmniPayloadStruct</code></th><td>stage 间传输的结构化包，包含 <code>hidden_states</code>、<code>embed</code>、<code>ids</code>、<code>codes</code>、<code>meta</code>、<code>speaker</code>、<code>language</code>。</td></tr>
+        <tr><th>PR #3614 关键字段</th><td><code>meta.is_segment_finished</code> 新增到 schema；发送端和接收端都要理解它和 <code>meta.finished</code> 的区别。</td></tr>
+      </table>
+
+      <h3>7.15 <code>OmniChunkTransferAdapter</code>：scheduler 侧 async_chunk 收发器</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/distributed/omni_connectors/transfer_adapter/chunk_transfer_adapter.py</code></td></tr>
+        <tr><th>类职责</th><td>在 scheduler 侧管理 connector chunk 的 put/get index、等待 chunk 的 request queue、segment/request finish 状态。</td></tr>
+        <tr><th>核心字段</th><td><code>put_req_chunk</code>/<code>get_req_chunk</code> 是每 request 的 chunk id；<code>finished_requests</code> 表示整条 request 结束；<code>segment_finished_requests</code> 表示当前 segment 结束；<code>requests_with_ready_chunks</code> 防止已收 chunk 但未 schedule 的 request 被重复拉走。</td></tr>
+        <tr><th><code>save_async()</code></th><td>发送端入口。它先算 confirmed watermark：<code>num_computed_tokens - num_output_placeholders</code>，防止未确认 async placeholder 被发送；然后把任务交给后台 save loop。</td></tr>
+        <tr><th><code>_send_single_request()</code></th><td>调用模型自定义 <code>custom_process_next_stage_input_func</code> 生成 payload；即使没有 tensor payload，只要 segment/request finish，也会发一个带 meta 的空 struct；最后写入 <code>meta.finished</code> 和 <code>meta.is_segment_finished</code>。</td></tr>
+        <tr><th><code>_poll_single_request()</code></th><td>接收端入口。AR 模式把 payload 放进 <code>request.additional_information</code>；generation 模式把 codec codes 转成 placeholder prompt 或真实 prompt。收到 <code>payload_segment_finished</code> 放入 <code>segment_finished_requests</code>，收到 <code>payload_finished</code> 放入 <code>finished_requests</code>。</td></tr>
+        <tr><th><code>process_pending_chunks()</code></th><td>schedule 前把 waiting/running 中还没 chunk 的 request 移到 <code>WAITING_FOR_CHUNK</code>，后台轮询 connector；chunk ready 后再恢复 request 原状态。</td></tr>
+      </table>
+
+      <h3>7.16 <code>OmniConnectorModelRunnerMixin</code> / <code>OmniConnectorOutput</code>：runner 侧 connector 信号</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/worker/omni_connector_model_runner_mixin.py</code>，<code>vllm_omni/outputs.py</code></td></tr>
+        <tr><th><code>OmniConnectorModelRunnerMixin</code></th><td>worker/model runner 侧的 connector 支撑。它有后台 save/recv loop、本地 payload cache、TP fanout、full-payload 与 async_chunk 两套路径。</td></tr>
+        <tr><th><code>register_chunk_recv()</code></th><td>runner 从 <code>pending_input_registrations</code> 得知某 request 需要接收 upstream chunk，注册到 <code>_pending_load_reqs</code>。</td></tr>
+        <tr><th><code>recv_chunk()</code></th><td>把后台线程已经收到的 chunk payload 暴露给模型执行线程，同时把 request id 加进 <code>_chunk_ready_req_ids</code>。</td></tr>
+        <tr><th><code>send_chunk()</code></th><td>模型执行后，按 request 和 chunk id 组装 connector put key，并把 payload 放入后台 save queue。</td></tr>
+        <tr><th><code>get_omni_connector_output()</code></th><td>把本轮 chunk ready、chunk finished、request metadata、stage recv ids 打包为 <code>OmniConnectorOutput</code>，挂到 <code>OmniModelRunnerOutput.omni_connector_output</code>，下一轮 scheduler 才能看到。</td></tr>
+        <tr><th><code>OmniConnectorOutput</code></th><td>字段包括 <code>chunk_ready_req_ids</code>、<code>chunk_finished_req_ids</code>、<code>request_metadata</code>、<code>kv_sent_req_ids</code>、<code>stage_recv_req_ids</code>、<code>has_pending_kv_work</code>。它是 runner 到 scheduler 的轻量控制面，不携带完整 tensor payload。</td></tr>
+      </table>
+
+      <h3>7.17 <code>OmniGPUModelRunner</code>：同 request 再次 schedule 时的本地 buffer</h3>
+      <table>
+        <tr><th>文件</th><td><code>vllm_omni/worker/gpu_model_runner.py</code></td></tr>
+        <tr><th>类职责</th><td>扩展 vLLM GPUModelRunner，维护 <code>model_intermediate_buffer</code>、Omni prefix cache、Qwen3 Talker MTP buffer，并在 schedule output 到 input batch 时处理 Omni payload。</td></tr>
+        <tr><th>关键分支</th><td>处理 <code>scheduler_output.scheduled_new_reqs</code> 时，如果 <code>req_id in self.requests</code>，说明不是全新 request，而是 streaming input 的已有 request 被当作 new segment 再次 schedule。此时先 <code>_update_streaming_input_additional_info(req_id)</code>，再 <code>_update_streaming_request()</code>。</td></tr>
+        <tr><th><code>_update_streaming_input_additional_info()</code></th><td>PR #3614 删除了“把 incoming additional_info 拼进 cached buffer”的逻辑，改成保留现有 buffer，只设置 <code>meta.num_processed_tokens=0</code> 和 <code>meta.resumable=True</code>。这样 Talker prefill 能从新片开始处理。</td></tr>
+      </table>
+
+      <h3>7.18 Qwen3 stage input processors：函数级桥接逻辑</h3>
+      <p>这些不是 class，但它们是每个 stage 之间真正决定 tensor/id 怎么变形的代码，所以必须和类一起看。文件是 <code>vllm_omni/model_executor/stage_input_processors/qwen3_omni.py</code>。</p>
+      <table>
+        <tr><th>函数</th><th>职责</th><th>关键细节</th></tr>
+        <tr><td><code>thinker2talker_async_chunk()</code></td><td>async_chunk 下把 Thinker hidden/embed/ids 打成 Talker payload。</td><td>chunk 0 会缓存 prefill，后续 <code>request.resumable</code> 时交给 streaming helper；非 resumable 且 <code>thinker_emb.shape[0] > 1</code> 会 warning，因为 decode chunk 理论上只应一行。</td></tr>
+        <tr><td><code>_construct_thinker2talker_streaming_input_async_chunk()</code></td><td>PR #3614 核心 helper。</td><td>新 segment prefill 行数大于 1 时缓存到 <code>_pending_streaming_prefills</code> 并返回 <code>None</code>；下一次 decode chunk 把 cached prefill 和当前 decode 拼接后发送，保证 Talker input ids 与 embedding rows 对齐。</td></tr>
+        <tr><td><code>thinker2talker()</code></td><td>non-async_chunk 显式转发路径的 Thinker->Talker。</td><td>streaming 时用 <code>_get_streaming_talker_tokens()</code> 只取当前 segment 的 prompt/output delta；再计算 Talker placeholder prompt 长度。</td></tr>
+        <tr><td><code>thinker2talker_token_only()</code></td><td>connector full-payload 路径中，Orchestrator 只传 placeholder tokens。</td><td>bulk tensors 由 worker connector buffer 传，Orchestrator 只负责 prompt 长度和 speaker/language 小字段。</td></tr>
+        <tr><td><code>talker2code2wav_async_chunk()</code></td><td>async_chunk 下把 Talker codec rows 变成 Code2Wav chunk。</td><td>按 <code>codec_chunk_frames</code> 聚合；携带 <code>left_context_size</code>；过滤 stop token codec frame，避免 terminal token 生成伪音频。</td></tr>
+        <tr><td><code>talker2code2wav()</code></td><td>non-async_chunk 显式转发路径的 Talker->Code2Wav。</td><td>streaming 时用 <code>_get_streaming_codec_delta_len()</code> 只取新增 codec 帧，避免重复发旧 audio codes。</td></tr>
+      </table>
+
+      <h3>7.19 补充数据类与协议类：request、output、stage client 边界</h3>
+      <p>这些类不一定承载复杂算法，但它们定义了跨模块边界。流式问题最容易出错的地方，通常就是这些结构里的 flag、id 和 payload 没有被完整透传。</p>
+      <table>
+        <tr><th>类/结构</th><th>文件</th><th>代码拆解</th></tr>
+        <tr>
+          <td><code>PromptEmbedsPayload</code></td>
+          <td><code>vllm_omni/engine/__init__.py</code></td>
+          <td>把 prompt embedding 序列化成 <code>data: bytes</code>，并保存 <code>shape</code> 与 <code>dtype</code>。shape 语义是 <code>[seq_len, hidden_size]</code>：<code>seq_len</code> 对齐 prompt token/placeholder 行数，<code>hidden_size</code> 对齐当前 stage 模型隐层维度。它解决的是跨进程传 prompt embeddings 不能直接传 tensor 引用的问题。</td>
+        </tr>
+        <tr>
+          <td><code>AdditionalInformationPayload</code></td>
+          <td><code>vllm_omni/engine/__init__.py</code></td>
+          <td>把 stage 间附加信息打成可序列化 dict，value 是 <code>AdditionalInformationEntry</code>。在 async_chunk 下，真正的 tensor payload 多数由 connector 传；这个结构更多承载小控制字段、shape、meta、语言/说话人等能随 request 进入 scheduler 的信息。</td>
+        </tr>
+        <tr>
+          <td><code>OmniEngineCoreRequest</code></td>
+          <td><code>vllm_omni/engine/__init__.py</code></td>
+          <td>继承/扩展 vLLM <code>EngineCoreRequest</code>，增加 <code>prompt_embeds</code>、<code>additional_information</code>、<code>external_req_id</code>。<code>from_request()</code> 会复制 upstream request 的通用字段，同时保留 <code>resumable</code>。这一步很关键：如果 <code>resumable</code> 在 engine core request 层丢失，scheduler 就无法把 segment finish 和 request finish 区分开。</td>
+        </tr>
+        <tr>
+          <td><code>OmniEngineCoreOutput</code></td>
+          <td><code>vllm_omni/engine/__init__.py</code></td>
+          <td>扩展 vLLM <code>EngineCoreOutput</code>，增加 <code>pooling_output</code>、<code>is_segment_finished</code>、<code>new_prompt_len_snapshot</code>。<code>pooling_output</code> 是 stage processor/connector 的原料；<code>is_segment_finished</code> 告诉 Orchestrator “本片结束但 request 可能未结束”；<code>new_prompt_len_snapshot</code> 给 non-async_chunk 转发路径切分本 segment 的 delta。</td>
+        </tr>
+        <tr>
+          <td><code>OmniEngineCoreOutputs</code></td>
+          <td><code>vllm_omni/engine/__init__.py</code></td>
+          <td>批量 output 容器，语义上对应一次 engine step 返回的多个 <code>OmniEngineCoreOutput</code>。它没有复杂逻辑，但保证 Orchestrator 能按 stage poll 到同一批结构化输出，而不是混用 upstream output 类型。</td>
+        </tr>
+        <tr>
+          <td><code>StageClient</code></td>
+          <td><code>vllm_omni/engine/stage_client.py</code></td>
+          <td>协议类，定义 Orchestrator 能对任意 stage client 做什么：<code>add_request_async</code>、<code>add_streaming_update_async</code>、<code>abort_request_async</code>、<code>step_async</code>、<code>process_engine_inputs</code>。它把“stage 是本地 engine 还是远端 replica”的差异挡在 Orchestrator 外面。</td>
+        </tr>
+        <tr>
+          <td><code>StagePoolLLMClient</code></td>
+          <td><code>vllm_omni/engine/stage_client.py</code></td>
+          <td>实际 LLM stage client 封装，负责把 Orchestrator 传入的 prompt/sampling params 转给底层 engine client。它也暴露 <code>process_engine_inputs()</code>，用于 non-async_chunk 显式转发时把上一 stage 的 output 转成下一 stage input。</td>
+        </tr>
+        <tr>
+          <td><code>OmniModelRunnerOutput</code></td>
+          <td><code>vllm_omni/outputs.py</code></td>
+          <td>runner 到 scheduler 的执行结果容器，扩展点是 <code>omni_connector_output</code>。模型 forward 的 token/logits 等仍走 vLLM 原有路径；connector 的 chunk ready、chunk finished、kv transfer 等控制信号通过这个字段旁路给 scheduler。</td>
+        </tr>
+        <tr>
+          <td><code>OmniRequestOutput</code></td>
+          <td><code>vllm_omni/outputs.py</code></td>
+          <td>最终返回给 <code>AsyncOmni.generate()</code> 调用者的统一输出结构。它包含 <code>stage_id</code>、<code>finished</code>、<code>request_output</code>、<code>images</code>、<code>latents</code>、<code>metrics</code>、<code>_multimodal_output</code>、<code>error</code>。<code>from_pipeline()</code> 包装 AR/pipeline 输出，<code>from_diffusion()</code> 包装 Code2Wav/diffusion 输出，<code>from_error()</code> 让异常也能沿同一条 async generator 交付。</td>
+        </tr>
+      </table>
+    </section>
+
     <section id="state">
-      <h2>7. 关键状态与不变量</h2>
+      <h2>8. 关键状态与不变量</h2>
       <table>
         <tr><th>状态</th><th>位置</th><th>不变量</th></tr>
         <tr><td><code>external_req_id</code></td><td><code>OmniRequest</code> / connector key</td><td>connector put/get key 用 external id 跨 stage 对齐；内部 request id 可带随机 suffix。</td></tr>
@@ -592,7 +817,7 @@ payload_data.meta.is_segment_finished = is_segment_finished</code></pre>
     </section>
 
     <section id="tests">
-      <h2>8. 测试覆盖与读码顺序</h2>
+      <h2>9. 测试覆盖与读码顺序</h2>
       <div class="grid">
         <div>
           <h3>PR 新增/修改的关键测试</h3>
