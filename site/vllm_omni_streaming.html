@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vLLM-Omni 流式输入 / 流式输出 / async_chunk 代码走读</title>
+  <link rel="stylesheet" href="./nav.css">
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #17202a;
+      --muted: #5c6878;
+      --line: #d7dee8;
+      --code-bg: #111827;
+      --code-ink: #e7eefb;
+      --blue: #2f6fda;
+      --green: #1c8065;
+      --orange: #b86413;
+      --red: #b43f4a;
+      --violet: #6a55bf;
+      --cyan: #177d93;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.68 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    header {
+      padding: 30px 40px 24px;
+      background: #101828;
+      color: #fff;
+    }
+    header h1 {
+      margin: 0 0 10px;
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    header p {
+      margin: 6px 0;
+      max-width: 1180px;
+      color: #ced8e6;
+    }
+    main {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 26px 24px 60px;
+    }
+    section {
+      margin: 0 0 20px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+    p { margin: 8px 0; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #eef2f7;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      margin: 12px 0;
+      padding: 14px 16px;
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-ink);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    pre code {
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+    table {
+      width: 100%;
+      margin: 12px 0;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      background: #f0f4f9;
+      text-align: left;
+    }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+    .toc {
+      columns: 2;
+      padding-left: 18px;
+    }
+    .note {
+      margin: 12px 0;
+      padding: 10px 12px;
+      border-left: 4px solid var(--blue);
+      border-radius: 6px;
+      background: #eef5ff;
+      color: #1c314f;
+    }
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7eb;
+      color: #51330e;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .diagram {
+      width: 100%;
+      margin: 12px 0;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+    svg {
+      display: block;
+      min-width: 1060px;
+    }
+    .box { fill: #fff; stroke: #9aa8ba; stroke-width: 1.2; rx: 8; }
+    .box-blue { fill: #edf4ff; stroke: var(--blue); }
+    .box-green { fill: #edf9f5; stroke: var(--green); }
+    .box-orange { fill: #fff4e5; stroke: var(--orange); }
+    .box-violet { fill: #f4f1ff; stroke: var(--violet); }
+    .box-cyan { fill: #ecfbff; stroke: var(--cyan); }
+    .box-red { fill: #fff0f0; stroke: var(--red); }
+    .arrow { stroke: #405166; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .dashed { stroke-dasharray: 5 5; }
+    .small { color: var(--muted); font-size: 13px; }
+    .pill {
+      display: inline-block;
+      margin: 2px 3px 2px 0;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 860px) {
+      header { padding: 24px 18px; }
+      main { padding: 18px 12px 44px; }
+      section { padding: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .toc { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="study-topnav" aria-label="Study note navigation">
+    <a class="study-topnav__brand" href="./">vLLM Study</a>
+    <div class="study-topnav__links"></div>
+  </nav>
+
+  <header>
+    <h1>vLLM-Omni 流式输入、流式输出与 async_chunk 代码走读</h1>
+    <p>基于本地 <code>vllm-omni</code> main、独立 worktree 的 PR 版本 <code>vllm-project/vllm-omni#3614</code>，以及上游 vLLM realtime 入口梳理。重点是先分清“流式”的语义层次，再把数据从 websocket、engine、orchestrator、scheduler、connector、Qwen3-Omni processor 一路走到底。</p>
+    <p class="small">PR #3614：<code>[Feat]audio streaming input for async chunk</code>，head commit <code>70450578</code>，截至 2026-05-31 16:16 Asia/Shanghai 仍为 open。</p>
+  </header>
+
+  <main>
+    <section>
+      <h2>目录</h2>
+      <ol class="toc">
+        <li><a href="#pr">PR #3614 先看结论</a></li>
+        <li><a href="#taxonomy">vLLM-Omni 里有哪些流式</a></li>
+        <li><a href="#overall">整体框架图</a></li>
+        <li><a href="#seq-input">流式输入时序</a></li>
+        <li><a href="#seq-async">async_chunk 时序</a></li>
+        <li><a href="#walkthrough">代码走读主线</a></li>
+        <li><a href="#state">关键状态与不变量</a></li>
+        <li><a href="#tests">测试覆盖与读码顺序</a></li>
+      </ol>
+    </section>
+
+    <section id="pr">
+      <h2>1. PR #3614 先看结论</h2>
+      <p>这个 PR 的目标不是普通“输出 streaming”，而是让 <code>/v1/realtime</code> 的音频输入在 <code>async_chunk=true</code> 时可以早启动：客户端不等整段音频上传完，Qwen3-Omni 把音频按约 5 秒切片，每片作为同一个 logical session 的 sub-request 进入 Stage-0 Thinker。每片 Thinker 结束后可以推进 Talker/Code2Wav 输出音频，下一片继续复用上一片的会话记忆。</p>
+      <pre><code>input slice 0 -> output segment 0 -> input slice 1 -> output segment 1 -> ... -> final slice -> final output</code></pre>
+      <table>
+        <tr><th>点</th><th>结论</th><th>代码入口</th></tr>
+        <tr><td>语义</td><td>Streaming input 改变 request boundary。它不是 chunked prefill，因此整段音频一次性推理和分片推理的输出不保证完全一致。</td><td><code>Qwen3OmniMoeForConditionalGeneration.buffer_realtime_audio</code></td></tr>
+        <tr><td>engine API</td><td><code>AsyncOmni.generate(prompt=AsyncGenerator[StreamingInput])</code> 启动一个 request，第一片走 <code>add_request(resumable=True)</code>，后续走 <code>streaming_update(resumable=True)</code>，最后发一个空的 <code>resumable=False</code> 终止片。</td><td><code>AsyncOmni._add_streaming_input_request</code></td></tr>
+        <tr><td>async_chunk</td><td>下游 stage 先 prewarm 一个 placeholder request；真实 Thinker->Talker / Talker->Code2Wav 数据由 connector chunk 传输。</td><td><code>Orchestrator._prewarm_async_chunk_stages</code>，<code>OmniChunkTransferAdapter</code></td></tr>
+        <tr><td>新增控制位</td><td><code>meta.is_segment_finished</code> 表示“当前输入片结束”；<code>meta.finished</code> 表示“整个 request 结束”。这两个必须分开，否则下游会把第一片结束误判为整条请求完成。</td><td><code>MetaStruct.is_segment_finished</code>，<code>save_async()</code>，<code>_poll_single_request()</code></td></tr>
+        <tr><td>PR 状态</td><td>20 个文件，+537/-185；有测试结果 <code>qwen3/tests/e2e/online_serving/test_qwen3_omni_expansion.py</code> 36 passed；review 里 docstring 问题已更新，另有 L3 测试提醒。</td><td><a href="https://github.com/vllm-project/vllm-omni/pull/3614">GitHub PR</a></td></tr>
+      </table>
+      <div class="note warn">相关 PR #3654 是“commit 后一次性生成”的兼容桥：把 realtime audio chunks buffer 到 <code>input_audio_buffer.commit(final=true)</code> 后，再作为普通 async_chunk multimodal request 提交。它不做早启动、不做 slice-by-slice scheduling，和 #3614 是互补关系。</div>
+    </section>
+
+    <section id="taxonomy">
+      <h2>2. vLLM-Omni 里有哪些流式</h2>
+      <table>
+        <tr><th>名字</th><th>它流的是什么</th><th>是不是改变模型语义</th><th>核心代码</th></tr>
+        <tr><td>OpenAI Realtime websocket 输入</td><td>客户端发 <code>input_audio_buffer.append</code>，server 把 PCM16 chunk 放进 <code>audio_queue</code>。</td><td>只是传输层 buffer；是否早启动取决于后面的 engine streaming input。</td><td>上游 <code>vllm/entrypoints/speech_to_text/realtime/connection.py</code>；Omni 覆写输出处理在 <code>vllm_omni/entrypoints/openai/realtime_connection.py</code></td></tr>
+        <tr><td>Engine streaming input</td><td><code>AsyncGenerator[StreamingInput]</code> 逐个 yield <code>TokensPrompt</code> 音频片。</td><td>是。每个片段是同一 session 的一次 continuation，推理可以夹在输入片之间。</td><td><code>AsyncOmni.generate</code>，<code>_add_streaming_input_request</code>，<code>AsyncOmniEngine.add_streaming_update</code></td></tr>
+        <tr><td>Scheduler streaming session</td><td>同一 <code>Request</code> 被 <code>StreamingUpdate</code> 更新，状态从 <code>WAITING_FOR_STREAMING_REQ</code> 回到 <code>WAITING</code>。</td><td>是。Stage-0 AR 会把旧输出并入新 prompt；下游 generation 通常替换 prompt。</td><td><code>OmniARScheduler._update_request_as_session</code>，<code>OmniGenerationScheduler._update_request_as_session</code></td></tr>
+        <tr><td>用户可见流式输出</td><td>text delta、audio delta、done 事件。</td><td>不改变模型语义，只改变返回粒度。</td><td><code>RealtimeConnection._run_generation</code>，<code>_raw_waveform_to_deltas</code>，<code>serving_chat.py</code> 的 SSE path</td></tr>
+        <tr><td>async_chunk</td><td>stage-to-stage 的 connector chunk：Thinker hidden/embed，Talker codec codes，Code2Wav 音频。</td><td>理论上不该改变完整 request 语义；但和 streaming input 组合后，每个输入片本身就是新语义边界。</td><td><code>OmniChunkTransferAdapter</code>，<code>OmniConnectorModelRunnerMixin.send_chunk/recv_chunk</code>，Qwen3 stage processors</td></tr>
+        <tr><td>codec/audio chunking</td><td>Talker 产生 codec frame 后按 <code>codec_chunk_frames</code> 和 left context 切给 Code2Wav。</td><td>通常只影响下游 vocoder 的增量解码与 TTFA。</td><td><code>talker2code2wav_async_chunk</code>，Code2Wav streaming decode</td></tr>
+        <tr><td>chunked prefill</td><td>完整输入已知，只是 scheduler 把 prefill tokens 分批 schedule。</td><td>不应改变 request 语义。</td><td>vLLM scheduler <code>enable_chunked_prefill</code>，不是 #3614 的 streaming input</td></tr>
+      </table>
+    </section>
+
+    <section id="overall">
+      <h2>3. 整体框架图</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 1180 500" role="img" aria-label="vLLM-Omni streaming framework">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#405166"></path>
+            </marker>
+          </defs>
+          <rect class="box box-blue" x="30" y="45" width="170" height="74"></rect>
+          <text x="115" y="76" text-anchor="middle" font-size="15" font-weight="700">Client</text>
+          <text x="115" y="99" text-anchor="middle" font-size="12">append / commit</text>
+
+          <rect class="box box-green" x="245" y="35" width="205" height="94"></rect>
+          <text x="347" y="65" text-anchor="middle" font-size="15" font-weight="700">RealtimeConnection</text>
+          <text x="347" y="88" text-anchor="middle" font-size="12">audio_queue</text>
+          <text x="347" y="108" text-anchor="middle" font-size="12">response.audio.delta</text>
+
+          <rect class="box box-cyan" x="495" y="35" width="205" height="94"></rect>
+          <text x="597" y="65" text-anchor="middle" font-size="15" font-weight="700">transcribe_realtime</text>
+          <text x="597" y="88" text-anchor="middle" font-size="12">buffer_realtime_audio</text>
+          <text x="597" y="108" text-anchor="middle" font-size="12">StreamingInput</text>
+
+          <rect class="box box-violet" x="745" y="35" width="190" height="94"></rect>
+          <text x="840" y="65" text-anchor="middle" font-size="15" font-weight="700">AsyncOmni</text>
+          <text x="840" y="88" text-anchor="middle" font-size="12">add_request</text>
+          <text x="840" y="108" text-anchor="middle" font-size="12">streaming_update</text>
+
+          <rect class="box box-orange" x="980" y="35" width="170" height="94"></rect>
+          <text x="1065" y="65" text-anchor="middle" font-size="15" font-weight="700">Orchestrator</text>
+          <text x="1065" y="88" text-anchor="middle" font-size="12">route / prewarm</text>
+          <text x="1065" y="108" text-anchor="middle" font-size="12">segment state</text>
+
+          <path class="arrow" d="M200 82 H245"></path>
+          <path class="arrow" d="M450 82 H495"></path>
+          <path class="arrow" d="M700 82 H745"></path>
+          <path class="arrow" d="M935 82 H980"></path>
+
+          <rect class="box box-blue" x="110" y="235" width="210" height="94"></rect>
+          <text x="215" y="264" text-anchor="middle" font-size="15" font-weight="700">Stage-0 Thinker</text>
+          <text x="215" y="287" text-anchor="middle" font-size="12">AR scheduler</text>
+          <text x="215" y="307" text-anchor="middle" font-size="12">hidden / embed chunks</text>
+
+          <rect class="box box-green" x="475" y="235" width="210" height="94"></rect>
+          <text x="580" y="264" text-anchor="middle" font-size="15" font-weight="700">Stage-1 Talker</text>
+          <text x="580" y="287" text-anchor="middle" font-size="12">AR scheduler</text>
+          <text x="580" y="307" text-anchor="middle" font-size="12">codec code chunks</text>
+
+          <rect class="box box-red" x="840" y="235" width="210" height="94"></rect>
+          <text x="945" y="264" text-anchor="middle" font-size="15" font-weight="700">Stage-2 Code2Wav</text>
+          <text x="945" y="287" text-anchor="middle" font-size="12">generation scheduler</text>
+          <text x="945" y="307" text-anchor="middle" font-size="12">waveform chunks</text>
+
+          <path class="arrow" d="M1065 129 C1065 180, 215 180, 215 235"></path>
+          <path class="arrow" d="M320 282 H475"></path>
+          <text x="397" y="268" text-anchor="middle" font-size="12" fill="#405166">connector chunk</text>
+          <path class="arrow" d="M685 282 H840"></path>
+          <text x="762" y="268" text-anchor="middle" font-size="12" fill="#405166">connector chunk</text>
+          <path class="arrow dashed" d="M945 235 C945 185, 347 185, 347 129"></path>
+          <text x="705" y="177" text-anchor="middle" font-size="12" fill="#405166">OmniRequestOutput / audio delta</text>
+
+          <rect class="box" x="315" y="390" width="550" height="58"></rect>
+          <text x="590" y="417" text-anchor="middle" font-size="14" font-weight="700">两层“流式”不要混淆</text>
+          <text x="590" y="438" text-anchor="middle" font-size="12">Streaming input 改 request 边界；async_chunk 改 stage 间传输/调度粒度。</text>
+        </svg>
+      </div>
+    </section>
+
+    <section id="seq-input">
+      <h2>4. 流式输入时序</h2>
+      <h3>4.1 websocket 到 engine</h3>
+      <pre><code>Client
+  | input_audio_buffer.append(audio_0)
+  v
+RealtimeConnection.audio_queue.put(audio_0)
+  | input_audio_buffer.commit(final=false)
+  v
+start_generation()
+  | creates audio_stream_generator()
+  | creates input_stream queue for stage-0 generated token feedback
+  v
+OpenAIServingRealtime.transcribe_realtime()
+  | model_cls.buffer_realtime_audio(audio_stream, input_stream, model_config)
+  | renderer.render_cmpl_async(...)
+  v
+AsyncOmni.generate(prompt=AsyncGenerator[StreamingInput])</code></pre>
+      <p>Qwen3-Omni 的 <code>buffer_realtime_audio</code> 用 <code>Qwen3ASRRealtimeBuffer</code> 缓冲音频。PR 版本里，<code>async_chunk=true</code> 时每凑够约 5 秒就 yield 一个 <code>TokensPrompt(prompt_token_ids=..., multi_modal_data={"audio": segment})</code>；<code>async_chunk=false</code> 时为避免 full-payload 路径重复响应，中间片不会 yield，只在 <code>flush()</code> 时发剩余音频。</p>
+
+      <h3>4.2 engine 到 scheduler</h3>
+      <pre><code>AsyncOmni._add_streaming_input_request()
+  first chunk:
+    AsyncOmniEngine.add_request_async(..., resumable=True)
+      -> StageSubmissionMessage(type="add_request")
+      -> Orchestrator._handle_add_request()
+  later chunks:
+    AsyncOmniEngine.add_streaming_update_async(..., resumable=True)
+      -> StageSubmissionMessage(type="streaming_update")
+      -> Orchestrator._handle_streaming_update()
+  final sentinel:
+    TokensPrompt([0]) with resumable=False
+      -> marks whole streaming session terminal</code></pre>
+      <div class="note"><code>_validate_streaming_input_sampling_params()</code> 当前限制：<code>SamplingParams</code>、<code>n == 1</code>、<code>output_kind != FINAL_ONLY</code>、不允许 stop strings。这个限制是为了让 session continuation 和 delta 输出状态机更简单。</div>
+    </section>
+
+    <section id="seq-async">
+      <h2>5. async_chunk 时序</h2>
+      <h3>5.1 不开 async_chunk：Orchestrator 显式转发</h3>
+      <pre><code>Stage-0 Thinker segment done
+  -> EngineCoreOutput(is_segment_finished=True)
+  -> Orchestrator._route_output()
+       if streaming.enabled and segment_finished:
+         next_client.process_engine_inputs(..., streaming_context=req_state.streaming)
+         next_pool.submit_initial/update(...)
+  -> downstream stage sees normal request/update</code></pre>
+      <p>这条路径的关键点是 <code>streaming_context.new_prompt_len_snapshot</code>。Stage-0 可能已经把下一片 prompt 追加进 request；<code>thinker2talker()</code> / <code>thinker2talker_token_only()</code> 会用这个 snapshot 去掉“下一片新 prompt tail”，避免把下一片输入错算进上一片 Talker 输入。</p>
+
+      <h3>5.2 开 async_chunk：下游先 prewarm，数据靠 connector chunk</h3>
+      <pre><code>first streaming slice
+  Orchestrator._handle_add_request()
+    -> submit Stage-0 real request
+    -> _prewarm_async_chunk_stages()
+         Stage-1/2 submit placeholder prompt
+         downstream request.resumable=True
+
+Stage-0 executes
+  OmniARScheduler.update_from_output()
+    -> chunk_transfer_adapter.save_async(pooler_output, request, is_segment_finished)
+    -> custom processor: thinker2talker_async_chunk()
+    -> connector.put(external_req_id_stage_chunk_id, payload)
+
+Stage-1 scheduler loop
+  chunk_transfer_adapter.process_pending_chunks()
+    -> request WAITING_FOR_CHUNK
+    -> connector.get(...)
+    -> request.additional_information = payload
+    -> request.status = WAITING / RUNNING
+
+current slice ends
+  payload.meta.is_segment_finished = True
+  downstream stops polling this segment
+
+next input slice arrives
+  Orchestrator._handle_streaming_update()
+    -> Stage-0 streaming_update
+    -> _prewarm_async_chunk_stages() again
+  downstream scheduler clears segment_finished_requests
+  next connector chunk resumes the same logical session</code></pre>
+      <table>
+        <tr><th>字段</th><th>含义</th><th>为什么需要</th></tr>
+        <tr><td><code>request.resumable</code></td><td>这是一个 streaming session，当前 segment 结束后还可能继续。</td><td><code>Request</code> finish 后不要立刻整体释放；下游 prewarm request 也要知道后续能继续。</td></tr>
+        <tr><td><code>meta.is_segment_finished</code></td><td>当前音频片结束。</td><td>让下游停止等待本片更多 chunk，但不要清掉整个 request。</td></tr>
+        <tr><td><code>meta.finished</code></td><td>整个 streaming request 结束。</td><td>只有它为真，才走 terminal cleanup。</td></tr>
+        <tr><td><code>num_output_placeholders</code></td><td>vLLM async scheduling 预占但尚未确认的输出 token。</td><td>PR 用 confirmed token cursor 发送 chunk，避免把未确认 token/embedding 传下游。</td></tr>
+      </table>
+    </section>
+
+    <section id="walkthrough">
+      <h2>6. 代码走读主线</h2>
+      <h3>6.1 RealtimeConnection：输入启动和输出 delta</h3>
+      <p><code>vllm_omni/entrypoints/openai/realtime_connection.py</code> 继承上游 realtime connection。输入侧还是上游逻辑：<code>append</code> 解码 PCM16 入队，<code>commit(final=false)</code> 启动 generation，<code>commit(final=true)</code> 放入 <code>None</code> sentinel。Omni 覆写的重点在 <code>_run_generation()</code>：</p>
+      <ul>
+        <li>调用 <code>self.engine.generate(prompt=streaming_input_gen, request_id=..., sampling_params_list=...)</code>。</li>
+        <li>只把 <code>stage_id == 0</code> 的 text delta 回传为 <code>TranscriptionDelta</code>，并把 Stage-0 新 token id 放入 <code>input_stream</code>，供下一轮 realtime prompt 构造上下文。</li>
+        <li><code>_extract_audio_chunks()</code> 支持 <code>multimodal_output["audio"]</code> 或 <code>["model_outputs"]</code>；<code>_raw_waveform_to_deltas()</code> 同时兼容“累计 waveform”和“真 delta waveform”。</li>
+        <li>最后总是发 <code>response.audio.done</code>，避免客户端挂住。</li>
+      </ul>
+
+      <h3>6.2 AsyncOmni / AsyncOmniEngine：把 generator 变成 request update</h3>
+      <p><code>AsyncOmni.generate()</code> 检测 <code>prompt</code> 是 <code>AsyncGenerator</code> 后进入 <code>_add_streaming_input_request()</code>。第一片音频用 <code>add_request_async(..., resumable=True)</code>，后续片用 <code>add_streaming_update_async(..., resumable=True)</code>。generator 结束时，如果已经提交过首片，就发一个 <code>TokensPrompt([0])</code> 且 <code>resumable=False</code> 的 final update。</p>
+      <p><code>AsyncOmniEngine._build_add_request_message()</code> 负责把 prompt 经过 stage-0 input processor 变成 <code>OmniEngineCoreRequest</code>，并把 <code>resumable</code> 写进 request；<code>StageSubmissionMessage.type</code> 只有两个值：<code>add_request</code> 和 <code>streaming_update</code>。</p>
+
+      <h3>6.3 Orchestrator：streaming state 与 stage 路由</h3>
+      <ul>
+        <li><code>OrchestratorRequestState.streaming</code> 保存 <code>enabled</code>、<code>segment_finished</code>、<code>new_prompt_len_snapshot</code>、<code>bridge_states</code>。</li>
+        <li><code>_handle_add_request()</code> 用 <code>prompt.resumable</code> 打开 streaming flag；PR #3614 让 async_chunk 模式在首片后调用 <code>_prewarm_async_chunk_stages()</code>。</li>
+        <li><code>_handle_streaming_update()</code> 找到现有 request state 后调用 <code>StagePool.submit_update()</code>；PR #3614 新增：streaming update 时也会 prewarm downstream stages，并把 downstream request 标为 resumable。</li>
+        <li><code>_orchestration_loop()</code> 从 raw <code>EngineCoreOutput</code> 把 <code>is_segment_finished</code> 和 <code>new_prompt_len_snapshot</code> 写回 request state。</li>
+        <li><code>_route_output()</code> 在 non-async_chunk 路径下，遇到 <code>finished</code> 或 streaming segment finished 就 <code>_forward_to_next_stage()</code>；如果是 streaming session 且整条 request finished，会额外发一个 <code>resumable=False</code> terminal update 给下游。</li>
+      </ul>
+
+      <h3>6.4 Scheduler：session update 怎么改 Request</h3>
+      <p><code>OmniARScheduler._update_request_as_session()</code> 是 Stage-0 Thinker 的核心。它先记录新片 prompt 长度到 <code>_new_prompt_len_snapshot</code>，再处理 async scheduling 的未确认 placeholder：如果 <code>num_output_placeholders > 0</code>，设置 <code>discard_latest_async_tokens=True</code>，回退 <code>num_computed_tokens</code>，清空 spec tokens，避免把上一片末尾尚未确认的 token 带入下一片。</p>
+      <p>Stage-0 后续调用 upstream session update 逻辑，把“旧 prompt + 已确认输出 + 新片 prompt”拼成新的 prompt。下游 async_chunk stage 不在 update 时替换 prompt，因为真实 prompt/additional information 要等 connector chunk 到来；它只清掉 <code>segment_finished_requests</code> 并把状态放回 <code>WAITING</code>。</p>
+      <p><code>OmniGenerationScheduler._update_request_as_session()</code> 是 Code2Wav/generation 类 stage 的替换语义：清空 <code>_output_token_ids</code> 和 <code>_all_token_ids</code>，把 update prompt 作为新 prompt，<code>num_computed_tokens=0</code>，并刷新 block hashes。</p>
+
+      <h3>6.5 Connector / async_chunk：chunk 生产、接收、finish marker</h3>
+      <p><code>OmniChunkTransferAdapter.save_async()</code> 计算 confirmed watermark：<code>num_computed_tokens - num_output_placeholders</code>。这就是 PR 里“不能把 async scheduling 多产出的最后一个 placeholder embedding 传给下游”的落点。<code>_send_single_request()</code> 会把 custom processor 产出的 <code>OmniPayloadStruct</code> 送到 connector，同时强制写入两个 meta：</p>
+      <pre><code>payload_data.meta.finished = is_finished
+payload_data.meta.is_segment_finished = is_segment_finished</code></pre>
+      <p><code>_poll_single_request()</code> 接收 chunk 后，如果是 AR 下游，直接把 payload 放进 <code>request.additional_information</code>；如果 <code>chunk_id > 0 and request.resumable</code>，会调用 <code>construct_next_stage_streaming_input_prompt()</code>。这个 helper 不重置 <code>num_computed_tokens</code>，而是把已计算输出移动进 <code>prompt_token_ids</code>，再追加按 <code>ids.prompt</code> 算出的新 placeholder prompt，并刷新 block hashes。</p>
+
+      <h3>6.6 Qwen3-Omni stage processors：Thinker -> Talker -> Code2Wav</h3>
+      <p><code>thinker2talker_async_chunk()</code> 在 chunk 0 处理首个 prefill，后续如果 <code>request.resumable</code> 走 <code>_construct_thinker2talker_streaming_input_async_chunk()</code>：</p>
+      <ul>
+        <li>当 <code>thinker_emb.shape[0] > 1</code>，说明新 streaming input segment 带来了 prefill embeddings/hidden states。它先缓存到 <code>_pending_streaming_prefills[request_id]</code>，返回 <code>None</code>，不立刻发下游。</li>
+        <li>下一次 decode chunk 到来时，把缓存的 prefill 与当前 decode embedding 拼起来发送，保证 Talker 的 ids 和 tensor rows 对齐。</li>
+        <li>没有 output token 且未 finish 时返回 <code>None</code>，避免把 async placeholder 或 stop token 的 embedding/hidden state 发下游。</li>
+      </ul>
+      <p><code>_get_streaming_talker_tokens()</code> 用 <code>last_prompt_len</code> / <code>last_output_len</code> 只取本 segment 增量；<code>_get_streaming_codec_delta_len()</code> 用 <code>talker2code2wav_last_seq_len</code> 只取新 codec 帧。<code>talker2code2wav_async_chunk()</code> 再按 <code>codec_chunk_frames</code> 聚合 codec rows，并携带 <code>left_context_size</code> 供 Code2Wav 做流式解码。</p>
+
+      <h3>6.7 Model runner：流式 prefill 的 additional info</h3>
+      <p><code>OmniGPUModelRunner</code> 遇到同一个 <code>req_id</code> 再次出现在 <code>scheduled_new_reqs</code> 时，走 <code>_update_streaming_request()</code>；PR #3614 把 <code>_update_streaming_input_additional_info()</code> 简化成只设置 <code>meta.num_processed_tokens = 0</code> 和 <code>meta.resumable = True</code>。Qwen3 Talker 的 <code>talker_preprocess()</code> 看到 <code>meta.resumable</code> 时，不再用 runner 的 <code>num_computed_tokens</code> 覆盖 <code>meta.num_processed_tokens</code>，避免 streaming prefill 被错误当成已处理过。</p>
+    </section>
+
+    <section id="state">
+      <h2>7. 关键状态与不变量</h2>
+      <table>
+        <tr><th>状态</th><th>位置</th><th>不变量</th></tr>
+        <tr><td><code>external_req_id</code></td><td><code>OmniRequest</code> / connector key</td><td>connector put/get key 用 external id 跨 stage 对齐；内部 request id 可带随机 suffix。</td></tr>
+        <tr><td><code>resumable</code></td><td><code>EngineCoreRequest</code> / <code>Request</code></td><td>segment finish 后不代表 request terminal；下游 prewarm request 也必须保留这个 flag。</td></tr>
+        <tr><td><code>_new_prompt_len_snapshot</code></td><td><code>OmniARScheduler</code> -> <code>EngineCoreOutput</code> -> Orchestrator streaming state</td><td>non-async_chunk 转发时，用来从 Thinker prompt 里切掉刚追加的下一片输入。</td></tr>
+        <tr><td><code>num_output_placeholders</code></td><td>vLLM async scheduling request state</td><td>发送 chunk 或拼接下一片时只能使用 confirmed tokens。</td></tr>
+        <tr><td><code>segment_finished_requests</code></td><td><code>OmniChunkTransferAdapter</code></td><td>只暂停当前 segment 的 chunk polling；下一次 streaming update 要 discard。</td></tr>
+        <tr><td><code>_pending_streaming_prefills</code></td><td>Qwen3 Thinker->Talker async processor</td><td>新 segment prefill chunk 先缓存，等下一次 decode chunk 一起发送，保持 tensor/id 对齐。</td></tr>
+        <tr><td><code>requests_num_chunks_sent</code></td><td><code>OmniChunkTransferAdapter</code></td><td>按 confirmed watermark 防重复发送，segment finish 后清理。</td></tr>
+        <tr><td><code>meta.finished</code> vs <code>meta.is_segment_finished</code></td><td><code>MetaStruct</code> / connector payload</td><td>前者释放整条 request，后者只结束当前音频片。</td></tr>
+      </table>
+    </section>
+
+    <section id="tests">
+      <h2>8. 测试覆盖与读码顺序</h2>
+      <div class="grid">
+        <div>
+          <h3>PR 新增/修改的关键测试</h3>
+          <ul>
+            <li><code>tests/core/sched/test_omni_ar_scheduler_streaming.py</code>：Stage-0 streaming update 对 async placeholder 的丢弃和 prompt 拼接。</li>
+            <li><code>tests/core/sched/test_omni_generation_scheduler_update_session.py</code>：generation stage 的 session replacement 行为。</li>
+            <li><code>tests/distributed/omni_connectors/test_chunk_transfer_adapter.py</code>：confirmed watermark、segment finish、generation empty chunk polling。</li>
+            <li><code>tests/model_executor/stage_input_processors/test_qwen3_omni_streaming_helpers.py</code>：Talker token delta、codec delta、streaming prefill cache/flush。</li>
+            <li><code>tests/entrypoints/openai_api/test_qwen3_omni_realtime_websocket.py</code>：PR 去掉跳过 async_chunk 的限制，覆盖 realtime websocket + async_chunk。</li>
+          </ul>
+        </div>
+        <div>
+          <h3>建议读码顺序</h3>
+          <ol>
+            <li><code>vllm_omni/entrypoints/openai/realtime_connection.py</code>：先看输入启动和输出事件。</li>
+            <li><code>vllm_omni/model_executor/models/qwen3_omni/qwen3_omni.py::buffer_realtime_audio</code>：看音频如何切成 prompt。</li>
+            <li><code>vllm_omni/entrypoints/async_omni.py::_add_streaming_input_request</code>：看 <code>add_request</code> / <code>streaming_update</code> 分界。</li>
+            <li><code>vllm_omni/engine/orchestrator.py</code>：看 request state、prewarm 和 route。</li>
+            <li><code>vllm_omni/core/sched/omni_ar_scheduler.py</code> 与 <code>omni_generation_scheduler.py</code>：看 Request 更新规则。</li>
+            <li><code>vllm_omni/distributed/omni_connectors/transfer_adapter/chunk_transfer_adapter.py</code>：看 chunk 收发和 finish marker。</li>
+            <li><code>vllm_omni/model_executor/stage_input_processors/qwen3_omni.py</code>：最后看 Qwen3 的 tensor/id 对齐细节。</li>
+          </ol>
+        </div>
+      </div>
+      <div class="note">一句话总括：用户输入 streaming 是 logical request 的 continuation；用户输出 streaming 是协议返回粒度；async_chunk 是 stage 间数据面的 streaming；chunked prefill 是 scheduler 粒度优化。PR #3614 的难点就是把这三种“流式”同时放在同一个 request 状态机里，并避免 segment finish 被当成 request finish。</div>
+    </section>
+  </main>
+
+  <script src="./nav.js"></script>
+</body>
+</html>

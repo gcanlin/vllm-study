@@ -21,6 +21,11 @@
       file: "vllm_prefix_cache.html",
       label: "Prefix Cache",
     },
+    {
+      href: "./vllm_omni_streaming.html",
+      file: "vllm_omni_streaming.html",
+      label: "Omni Streaming",
+    },
     { href: "./vllm_sampler.html", file: "vllm_sampler.html", label: "Sampler" },
     { href: "./vllm_vit_dp.html", file: "vllm_vit_dp.html", label: "ViT DP" },
     { href: "./vime_framework.html", file: "vime_framework.html", label: "Vime" },
