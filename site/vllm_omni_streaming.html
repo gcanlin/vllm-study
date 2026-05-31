@@ -111,6 +111,14 @@
       background: #f0f4f9;
       text-align: left;
     }
+    .codewalk th:first-child,
+    .codewalk td:first-child {
+      width: 128px;
+      white-space: nowrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #43536a;
+    }
     ul, ol { padding-left: 22px; }
     li { margin: 4px 0; }
     .toc {
@@ -199,6 +207,7 @@
         <li><a href="#seq-async">async_chunk 时序</a></li>
         <li><a href="#walkthrough">代码走读主线</a></li>
         <li><a href="#class-deepdive">类级代码拆解</a></li>
+        <li><a href="#line-walk">关键函数逐行走读</a></li>
         <li><a href="#state">关键状态与不变量</a></li>
         <li><a href="#tests">测试覆盖与读码顺序</a></li>
       </ol>
@@ -801,8 +810,200 @@ payload_data.meta.is_segment_finished = is_segment_finished</code></pre>
       </table>
     </section>
 
+    <section id="line-walk">
+      <h2>8. 关键函数逐行走读</h2>
+      <p>这一节按 PR worktree <code>/tmp/vllm-omni-pr3614</code> 的行号写，基准 commit 是 <code>70450578</code>。这里的“逐行”不是把整段源码复制一遍，而是按连续行号解释每个语句块修改了什么状态、向下游传了什么字段、为什么 streaming/async_chunk 需要它。</p>
+
+      <h3>8.1 <code>entrypoints/openai/realtime_connection.py</code>：websocket 输出事件逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L22-L33</td><td>定义 Omni 版 <code>RealtimeConnection</code>，继承上游连接状态机。<code>__init__</code> 里先复用上游初始化，再把 <code>serving.engine_client</code> 强转成 <code>AsyncOmni</code>，最后初始化 <code>_realtime_audio_ref</code>。这个 ref 是输出侧去重的关键：有些路径返回累计 waveform，有些路径返回增量 waveform。</td></tr>
+        <tr><td>L37-L52</td><td><code>_tensor_to_numpy</code> 是音频统一入口：<code>None</code> 直接跳过；numpy 不复制；torch tensor 走 <code>detach().float().cpu().numpy()</code>；其他类型尽量 <code>np.asarray</code>。L50-L52 把多维音频拉平成一维 <code>float32</code>，因为 realtime websocket 发的是 PCM sample stream，不保留 batch/channel 维。</td></tr>
+        <tr><td>L55-L61</td><td><code>_numpy_audio_prefix_match</code> 判断 <code>curr</code> 是否以前一次已发送的 <code>prev</code> 为前缀。L57 允许空前缀；L59 防止当前比历史还短；L61 用较宽容的 <code>allclose</code>，避免 float 量化误差导致累计 waveform 被误判成 delta。</td></tr>
+        <tr><td>L63-L81</td><td><code>_raw_waveform_to_deltas</code> 真正做 audio delta。L69 空数组不发；L72-L74 第一次见到音频时整段发送并缓存；L75-L78 如果当前波形包含历史前缀，只切 <code>arr[ref_len:]</code> 发给客户端；L79-L81 如果不是前缀，认为模型已经给的是 per-step delta，于是直接发送当前数组，并把 ref 追加增长。</td></tr>
+        <tr><td>L83-L104</td><td><code>_extract_audio_chunks</code> 从 <code>OmniRequestOutput.multimodal_output</code> 里找音频。L84-L86 没有 dict 就返回空音频和默认 24k；L88 兼容 <code>sr</code>、<code>sample_rate</code>、<code>audio_sample_rate</code>；L89 优先取 <code>audio</code>，否则取 <code>model_outputs</code>。L95-L103 兼容 list/tuple 和单 tensor，两种都交给前面的 delta 逻辑。</td></tr>
+        <tr><td>L106-L110</td><td><code>_pcm16_b64</code> 是协议适配：把 float32 音频裁到 [-1, 1]，乘 32767 转 int16，再 base64。客户端收到的是 OpenAI realtime 风格 <code>response.audio.delta</code>。</td></tr>
+        <tr><td>L112-L123</td><td><code>_run_generation</code> 开头生成唯一 request id，初始化 <code>sent_audio</code>、<code>audio_done_sent</code>、累计 text、token 计数，并清空 <code>_realtime_audio_ref</code>。每个 websocket generation task 都要独立去重，不能沿用上一次会话的音频前缀。</td></tr>
+        <tr><td>L125-L138</td><td>复制默认 sampling params，并通过 <code>coerce_param_message_types(..., is_streaming=True)</code> 强制走 delta 输出语义。随后调用 <code>self.engine.generate(prompt=streaming_input_gen, request_id=..., sampling_params_list=...)</code>。这里的 <code>prompt</code> 不是一次性 prompt，而是 <code>AsyncGenerator[StreamingInput]</code>，后面会被 <code>AsyncOmni</code> 拆成首片 add request 和后续 update。</td></tr>
+        <tr><td>L140-L160</td><td>逐个消费 engine 输出。L141 取 <code>stage_id</code>；L142 只在 Stage-0 且有 text output 时处理 transcript。L144-L147 把 Stage-0 新 token id 放进 <code>input_stream</code>，这是 realtime prompt 继续携带文本上下文的回路。L148-L156 维护 usage 计数和 full text；L158-L160 只要有 delta text 就发 <code>TranscriptionDelta</code>。</td></tr>
+        <tr><td>L161-L172</td><td>无论来自哪个 stage，只要 <code>multimodal_output</code> 里能抽出音频，就发 <code>response.audio.delta</code>。这里不限定 Stage-2，是为了兼容不同 pipeline 把 audio 放在不同 final output 位置；真正的音频去重已经由 L63-L81 处理。</td></tr>
+        <tr><td>L174-L185</td><td>L174-L175 客户端断开就停止消费；L177-L182 构造 usage 并发 <code>TranscriptionDone</code>；L184-L186 如果曾发过音频，再发 <code>response.audio.done</code>。这两个 done 是两个协议面：text transcription done 和 audio response done。</td></tr>
+        <tr><td>L187-L199</td><td>异常时发 <code>processing_error</code>；<code>finally</code> 里只要连接还在且 audio done 没发过，就补一个 terminal <code>response.audio.done</code>，避免客户端一直等音频流结束。L197-L198 清空 <code>audio_queue</code>，防止旧音频 chunk 泄漏到下一轮。</td></tr>
+      </table>
+
+      <h3>8.2 <code>qwen3_omni.py</code>：音频切片与 Talker prefill 逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L214-L223</td><td><code>buffer_realtime_audio</code> 是模型类给上游 realtime serving 暴露的 async generator。L220-L223 从 <code>model_config</code> 拿 processor、feature extractor、sampling rate 和 tokenizer；切片必须用模型特征抽取器的采样率，否则 <code>segment_duration_s</code> 对应的 sample 数会错。</td></tr>
+        <tr><td>L225-L230</td><td>固定 <code>segment_duration_s=5.0</code>，创建 <code>Qwen3ASRRealtimeBuffer</code>。这不是 websocket chunk 大小，而是模型推理片段大小：客户端可能 20ms/100ms 地 append，buffer 负责拼到接近 5 秒再吐给 engine。</td></tr>
+        <tr><td>L232-L235</td><td>构造 Qwen3-Omni 的 audio placeholder prompt，并 tokenize 成固定 <code>prompt_token_ids</code>。每个音频 segment 都复用同一段文本模板，音频本身放进 <code>multi_modal_data</code>。</td></tr>
+        <tr><td>L237-L243</td><td>读取 <code>model_config.async_chunk</code>。注释说明了关键语义：非 async_chunk full-payload 路径如果中间片也 yield，会被 engine 当成 fresh decode，导致重复文本/重复音频，所以只有 async_chunk 才早 yield 中间 segment。</td></tr>
+        <tr><td>L244-L252</td><td>每收到 websocket audio chunk，就 <code>buffer.write_audio</code>。如果 <code>async_chunk=true</code>，循环读出所有已完整的 segment；每个 segment yield 一个 <code>TokensPrompt(prompt_token_ids=..., multi_modal_data={"audio": segment})</code>。这就是后续 <code>AsyncOmni._add_streaming_input_request</code> 的 chunk 输入。</td></tr>
+        <tr><td>L254-L259</td><td>audio stream 结束后 <code>flush()</code>，如果还有尾音频，yield 最后一片。async_chunk=false 时，中间不会 yield，这里就成为唯一提交；async_chunk=true 时，这里只是补尾片。</td></tr>
+        <tr><td>L665-L680</td><td><code>talker_preprocess</code> 先把 <code>info_dict</code> 当 stage payload，确保 <code>meta</code> 存在；如果只有 ids 没有 embeds，就用 Talker embedding 层补出 <code>input_embeds</code>。L676-L680 用 <code>_omni_is_prefill</code> 判定 prefill，比直接看 <code>span_len > 1</code> 更可靠，因为 prefix cache 可能把 prefill 剩余长度压到 1。</td></tr>
+        <tr><td>L681-L686</td><td>prefill 分支里读取 <code>_omni_num_computed_tokens</code> 和 <code>meta.resumable</code>。非 resumable 时可以把已计算 token 数写成 <code>num_processed_tokens</code>；resumable streaming 新片必须跳过这个覆盖，否则 Talker 会以为新 segment 的 prefill 已经处理过，导致输入 rows 被错误裁掉。</td></tr>
+      </table>
+
+      <h3>8.3 <code>AsyncOmni</code>：generator 到 add/update 的逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L281-L285</td><td><code>generate</code> 一开始把用户传入的 <code>request_id</code> 保存为 <code>external_request_id</code>，再生成内部唯一 id。Omni 后续又会恢复 <code>external_req_id</code>，因为 connector key 和 Orchestrator request state 要稳定使用外部 logical id。</td></tr>
+        <tr><td>L287-L332</td><td>等待 engine 未暂停，启动 final output dispatcher，展开 sampling params，计算 final stage，创建 <code>ClientRequestState</code> 并放入 <code>self.request_states</code>。这部分是所有请求共用的准备工作，streaming 特别依赖 <code>req_state.queue</code> 接收 Orchestrator 输出和 error。</td></tr>
+        <tr><td>L341-L356</td><td>真正分岔：如果 <code>prompt</code> 是 <code>AsyncGenerator</code>，进入 <code>_add_streaming_input_request</code>；否则直接 <code>engine.add_request_async</code>。注意 streaming 分支没有 await 每个 chunk 的结果，而是启动后台 task 消费输入流。</td></tr>
+        <tr><td>L361-L372</td><td>无论 sequential 还是 async_chunk，前端都只读 <code>_process_orchestrator_results</code> 的同一条输出流。stage 间怎么转发，由 Orchestrator 和 scheduler 决定，<code>AsyncOmni</code> 不直接碰 Thinker/Talker/Code2Wav 数据面。</td></tr>
+        <tr><td>L389-L405</td><td><code>_add_streaming_input_request</code> 校验 sampling params 非空，只检查 Stage-0 参数；初始化 <code>has_submitted_first_chunk=False</code>，这个 flag 决定第一片走 <code>add_request</code>，后续走 <code>streaming_update</code>。</td></tr>
+        <tr><td>L406-L411</td><td>如果 Stage-0 sampling params 还没 <code>skip_clone</code>，先 clone 并设 <code>skip_clone=True</code>。这是为了避免每个 streaming chunk 都反复深拷贝相同参数，也避免 input processor 内部再次 clone 时破坏 delta 参数。</td></tr>
+        <tr><td>L412-L423</td><td>内部 <code>handle_inputs</code> task 消费 <code>input_stream</code>。每个 chunk 可以携带自己的 sampling params；没有就复用 Stage-0 params。L419-L420 只替换 sampling params list 的第 0 个元素，其他 stage 参数保持原样。L421-L423 抽出 prompt_text，给 realtime 输出/日志兼容使用。</td></tr>
+        <tr><td>L424-L433</td><td>第一片调用 <code>engine.add_request_async(..., resumable=True)</code>。这一步创建真正的 Stage-0 request，并把 <code>resumable</code> 传到 engine core request、scheduler request 和 Orchestrator streaming state。</td></tr>
+        <tr><td>L434-L442</td><td>第二片及以后调用 <code>engine.add_streaming_update_async(..., resumable=True)</code>。它不是新建 request，而是同 request id 的 session continuation，scheduler 会用 <code>StreamingUpdate</code> 更新已有 request。</td></tr>
+        <tr><td>L443-L451</td><td>输入 task 被取消时只标记 cancelled；其他异常写入 <code>req_state.queue</code> 的 <code>ErrorMessage</code>，这样主 <code>generate</code> 输出循环能按普通 engine error 处理。</td></tr>
+        <tr><td>L452-L478</td><td>输入流正常结束时发 final sentinel。L458 用 <code>TokensPrompt([0])</code> 作为空 final prompt；如果之前已经提交首片，则发 <code>streaming_update(resumable=False)</code>；如果一片都没来过，则退化成 <code>add_request(resumable=False)</code>。这个 <code>resumable=False</code> 是整条 request terminal 的信号。</td></tr>
+        <tr><td>L479-L481</td><td>创建并保存输入 task，后续如果用户取消 generator，可以在 <code>generate</code> 的异常分支里 cancel 它。</td></tr>
+        <tr><td>L483-L494</td><td>streaming input 目前只允许 <code>SamplingParams</code>、<code>n == 1</code>、非 <code>FINAL_ONLY</code>、无 stop strings。原因是多候选和 stop string 都会让 continuation token 边界和 delta 输出难以定义。</td></tr>
+      </table>
+
+      <h3>8.4 <code>AsyncOmniEngine</code>：预处理、resumable 透传、消息入队</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L1607-L1624</td><td><code>_build_add_request_message</code> 的签名新增两个核心参数：<code>resumable</code> 和 <code>message_type</code>。同一个 builder 同时服务普通首包和 streaming update，避免两条路径预处理不一致。</td></tr>
+        <tr><td>L1626-L1635</td><td>解析有效 sampling params list，没有传就用默认 list；然后取 Stage-0 参数。streaming input 只在 Stage-0 做 input processing，后续 stage 的参数在 Orchestrator 转发/prewarm 时使用。</td></tr>
+        <tr><td>L1637-L1644</td><td>保存 <code>original_prompt</code>。这很重要：Stage-0 input processor 会把用户 dict 变成 <code>EngineCoreRequest</code>，但下游 Qwen3 bridge 还需要原始 prompt 里的 audio、speaker、language 等信息。</td></tr>
+        <tr><td>L1645-L1657</td><td>非 diffusion 且 prompt 还不是 <code>EngineCoreRequest</code> 时，先把 <code>global_request_id</code> 注入 raw prompt，再把多模态 cache key scope 到选定的 Stage-0 replica。streaming 必须保持同 request 的多模态 cache/replica 绑定稳定。</td></tr>
+        <tr><td>L1658-L1673</td><td>调用 <code>self.input_processor.process_inputs(..., resumable=resumable)</code>。这行是 <code>resumable</code> 从 API 层进入 vLLM engine request 的入口；少了它，scheduler 侧 request 就不知道 segment finish 后还可以继续。</td></tr>
+        <tr><td>L1674-L1678</td><td>如果 input processing 抛异常，就释放刚才预选的 Stage-0 replica binding；否则记录预处理耗时。</td></tr>
+        <tr><td>L1679-L1682</td><td><code>_upgrade_to_omni_request</code> 把 upstream input processor 可能丢掉的 Omni-only 字段补回来，比如 prompt embeds 和 additional information。</td></tr>
+        <tr><td>L1686-L1693</td><td>强制把 <code>request.external_req_id</code> 恢复为当前 logical request id，并注入 final stage metadata。注释里说得很直白：InputProcessor 可能改 request id；Orchestrator 的 <code>request_states</code> lookup 依赖外部 id，必须恢复。</td></tr>
+        <tr><td>L1695-L1701</td><td>output processor registration 被推迟到 Orchestrator thread；这里只保存 prompt text，并把 <code>prompt</code> 替换成预处理后的 request。</td></tr>
+        <tr><td>L1703-L1713</td><td>构造 <code>StageSubmissionMessage</code>。<code>type</code> 是 <code>add_request</code> 或 <code>streaming_update</code>；<code>prompt</code> 是预处理后的 request；<code>original_prompt</code> 保留原始输入；<code>enqueue_ts</code> 用于 queue wait metrics。</td></tr>
+        <tr><td>L2227-L2259</td><td><code>add_request_async</code> 只是 async wrapper，最终调用同步 <code>add_request</code>，并把 <code>resumable</code> 原样传下去。第一片 streaming audio 走这里。</td></tr>
+        <tr><td>L2261-L2283</td><td><code>add_streaming_update</code> 调同一个 builder，但 <code>message_type="streaming_update"</code>，再把 message 放进 <code>request_queue.sync_q</code>。后续 audio segment 和 final sentinel 都走这里。</td></tr>
+        <tr><td>L2285-L2305</td><td><code>add_streaming_update_async</code> 是 async wrapper，方便 <code>AsyncOmni._add_streaming_input_request</code> 统一 await。</td></tr>
+      </table>
+
+      <h3>8.5 <code>Orchestrator</code>：request state、segment finish、prewarm 逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L72-L115</td><td><code>build_engine_core_request_from_tokens</code> 从 <code>OmniTokensPrompt</code> 直接构造 <code>OmniEngineCoreRequest</code>。L85 取 prompt ids；L89-L95 clone sampling/pooling params；L96-L100 序列化 prompt embeds 和 additional information；L102-L115 把 <code>resumable</code> 写进 request。这是下游 stage prewarm 和显式转发时构造 request 的统一入口。</td></tr>
+        <tr><td>L118-L148</td><td><code>OrchestratorRequestState</code> 保存 logical request 全局状态，<code>StreamingInputState</code> 保存 streaming 子状态。L142 是是否 streaming；L144 是当前 segment 是否结束；L146 保存新 prompt 长度；L148 的 <code>bridge_states</code> 给 Qwen3 helper 存跨 segment 游标。</td></tr>
+        <tr><td>L321-L330</td><td>request handler 根据 <code>msg.type</code> 分发。普通首包走 <code>_handle_add_request</code>；后续片走 <code>_handle_streaming_update</code>。这是 <code>StageSubmissionMessage.type</code> 发挥作用的位置。</td></tr>
+        <tr><td>L365-L397</td><td><code>_handle_add_request</code> 解包 message，创建 <code>OrchestratorRequestState</code> 并注册到 <code>request_states</code>。L396 用 <code>prompt.resumable</code> 打开 <code>req_state.streaming.enabled</code>；首片如果是 realtime streaming，这里会变成 true。</td></tr>
+        <tr><td>L398-L409</td><td>记录 queue wait/preprocess metrics，然后通过 <code>StagePool.submit_initial</code> 提交 Stage-0。StagePool 会绑定 replica，后续 update 必须沿同一个 request binding 走。</td></tr>
+        <tr><td>L411-L412</td><td>如果全局 <code>async_chunk=true</code>、当前是 Stage-0、final stage 大于 0，立即 prewarm 下游 stage。这样 Talker/Code2Wav 不等 Stage-0 完整输出才创建 request，而是先进入等待 connector chunk 的状态。</td></tr>
+        <tr><td>L414-L438</td><td><code>_handle_streaming_update</code> 先找已有 request state；如果找不到，降级成 add_request。这个 fallback 防御竞态，但正常路径一定是已有首片。</td></tr>
+        <tr><td>L440-L450</td><td>有新的 sampling params 就更新 request state；强制 <code>streaming.enabled=True</code>；更新 Stage-0 submit timestamp；调用 <code>StagePool.submit_update</code>。语义是“同一 request 的下一段输入”，不是新 request。</td></tr>
+        <tr><td>L452-L453</td><td>PR #3614 的关键补丁之一：streaming update 时也调用 <code>_prewarm_async_chunk_stages</code>。否则第一片之后下游 request 可能停在 segment finished 状态，不会为下一片重新等待 connector chunk。</td></tr>
+        <tr><td>L590-L606</td><td>Orchestrator poll 到 raw <code>EngineCoreOutputs</code> 后，先把每个 <code>eco.is_segment_finished</code> 和 <code>eco.new_prompt_len_snapshot</code> 写进 <code>req_state.streaming</code>，再调用 <code>process_llm_raw_outputs</code>。这样后续 <code>_route_output</code> 和 Qwen3 <code>process_engine_inputs</code> 能读到准确的 segment 边界。</td></tr>
+        <tr><td>L735-L765</td><td><code>_route_output</code> 先判断是否 final output stage；如果是，就向前端 queue 发 <code>OutputMessage</code>。这里的 <code>finished</code> 是 stage output finished，不一定等于整条 pipeline finished。</td></tr>
+        <tr><td>L782-L787</td><td>non-async_chunk 显式转发条件：当前 stage finished，或 streaming session 当前 segment finished；不是 final stage；并且 <code>async_chunk=false</code>。这说明 async_chunk 模式的数据不靠 Orchestrator 显式转发，靠 connector chunk。</td></tr>
+        <tr><td>L795-L812</td><td>满足转发条件时调用 <code>_forward_to_next_stage</code>。如果 streaming session 整体 finished，还额外发一次 <code>is_final_update=True</code> 的 terminal update，让下游收到 <code>resumable=False</code>。</td></tr>
+        <tr><td>L921-L939</td><td><code>_forward_to_next_stage</code> 计算下一 stage、取 params、source output，并根据 <code>is_streaming_session and not is_final_update</code> 得到 <code>next_stage_resumable</code>。这个 flag 直接决定下游 request 是等待下一 segment，还是 terminal cleanup。</td></tr>
+        <tr><td>L1074-L1088</td><td>普通 LLM 下游调用 <code>next_client.process_engine_inputs(..., streaming_context=req_state.streaming)</code>。这就是 Qwen3 <code>thinker2talker</code> / <code>talker2code2wav</code> 能拿到 <code>new_prompt_len_snapshot</code> 和 bridge state 的入口。</td></tr>
+        <tr><td>L1089-L1109</td><td>把每个 next input 构造成 <code>OmniEngineCoreRequest</code>，写入 <code>resumable=next_stage_resumable</code>。如果下一 stage 已经提交过，走 <code>submit_update</code>；否则走 <code>submit_initial</code>。</td></tr>
+        <tr><td>L1111-L1128</td><td><code>_prewarm_async_chunk_stages</code> 开头只处理有下游 stage 的请求，并要求 Stage-0 request 有 <code>prompt_token_ids</code>。没有 prompt ids 就跳过，因为无法估计 Talker placeholder 长度。</td></tr>
+        <tr><td>L1129-L1134</td><td>遍历 Stage-1 到 final stage，并记录 submit timestamp。async_chunk prewarm 会让多个下游 stage 都提前存在 request，而不是等上一 stage output。</td></tr>
+        <tr><td>L1135-L1146</td><td>如果下游是 diffusion stage，直接 submit 原始 prompt，并附带 KV sender info。这里服务 image/audio diffusion 类 stage。</td></tr>
+        <tr><td>L1147-L1175</td><td>LLM stage prewarm：先估计 Talker prompt 长度，拷贝原始 prompt 成 base input，把 prompt ids 替换成对应长度的零 placeholder，清掉多模态数据，再用 <code>stage0_request.resumable</code> 构造下游 request。L1175 提交 initial request，下游 scheduler 会等待 connector 真 chunk。</td></tr>
+      </table>
+
+      <h3>8.6 <code>OmniARScheduler</code>：Stage-0 continuation 与 async placeholder 逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L381-L389</td><td><code>update_from_output</code> 对每个 request 初始化本轮局部变量：<code>stopped</code>、<code>is_segment_finished</code>、<code>new_token_ids</code>、<code>pooler_output</code>、<code>status_before_stop</code>。后面 <code>is_segment_finished</code> 会被写进 <code>EngineCoreOutput</code>。</td></tr>
+        <tr><td>L391-L403</td><td>如果有新 token，就更新 request 输出状态；如果 pooling request 有 output，也会停止；如果 KV transfer trigger 触发，也把 stopped 置 true。对 streaming input 来说，segment 结束通常表现为 request stopped，但不一定 terminal。</td></tr>
+        <tr><td>L419-L430</td><td>进入 stopped 分支后，先抓取 finish reason，然后设置 <code>is_segment_finished=True</code>。随后 <code>_handle_stopped_request</code> 返回 <code>finished</code>：true 表示整条 request 结束；false 表示只是 streaming segment 结束，request 等下一片。</td></tr>
+        <tr><td>L431-L442</td><td>如果只是 segment 结束：下游 async_chunk stage 会从 <code>segment_finished_requests</code> 里 discard 当前 request，以便下一片恢复 polling；同时清掉 async placeholder、spec tokens、output ids。这里的目标是避免上一片末尾的 speculative/placeholder token 污染下一片。</td></tr>
+        <tr><td>L442-L452</td><td>如果整条 request 真 finished，就释放 request；否则根据 stopped 前状态从 running/waiting 队列中移除，避免同一个 request 同时留在多个队列。</td></tr>
+        <tr><td>L463-L482</td><td>只要有新 token、pooler output、KV transfer 或 stopped，就构造 <code>EngineCoreOutput</code>。L480-L481 是 PR 关键字段：把 <code>is_segment_finished</code> 和 <code>_new_prompt_len_snapshot</code> 发给 Orchestrator。</td></tr>
+        <tr><td>L484-L485</td><td>如果启用了 chunk adapter，每次有可输出内容就 <code>save_async(pooler_output, request, is_segment_finished)</code>。这把 scheduler output 和 connector chunk 发送绑定起来。</td></tr>
+        <tr><td>L627-L635</td><td><code>_update_request_as_session</code> 是 streaming update 到达 scheduler 后的核心。L635 记录新片 prompt 长度，后续 non-async_chunk bridge 用它从累计 prompt 里切掉“下一片 tail”。</td></tr>
+        <tr><td>L636-L645</td><td>如果有 <code>num_output_placeholders</code>，说明 async scheduling 可能已经乐观前进了未确认 token。这里设置 <code>discard_latest_async_tokens</code>，回退 <code>num_computed_tokens</code>，清空 placeholder 和 spec tokens。</td></tr>
+        <tr><td>L645-L650</td><td>有 chunk adapter 时，先清掉 <code>requests_num_chunks_sent</code> 的发送水位；如果当前 scheduler 不是 Stage-0，清掉 <code>segment_finished_requests</code>。这让下一片可以继续从 connector 收 chunk。</td></tr>
+        <tr><td>L651-L664</td><td>下游 async_chunk stage 不替换 prompt/additional information，只更新 arrival time 和 sampling params，把状态放回 <code>WAITING</code>，必要时从 skipped waiting 队列搬回 waiting。因为真实输入要等 connector payload 到。</td></tr>
+        <tr><td>L665</td><td>Stage-0 或非 async_chunk 情况，交给 vLLM upstream session update：把旧 prompt、已确认输出、新 prompt 拼成新的 session prompt。</td></tr>
+      </table>
+
+      <h3>8.7 <code>OmniGenerationScheduler</code>：Code2Wav 等 generation stage 逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L40-L56</td><td>初始化 generation scheduler。L45-L47 如果 <code>model_config.async_chunk</code> 为真就创建 <code>OmniChunkTransferAdapter</code>；L47 的 <code>_pending_finish_reqs</code> 用来缓存 connector 已完成但还没输出 terminal output 的 request。</td></tr>
+        <tr><td>L65-L89</td><td><code>schedule</code> 开头设置 token budget、启动新 step、初始化各种输出容器。L85 消费 runner connector output，L86 处理 timeout，L87-L88 让 chunk adapter 先移动/恢复等待 chunk 的 request。</td></tr>
+        <tr><td>L93-L117</td><td>处理 running request。L103-L105 计算还需要 schedule 的输入 token；L109-L116 是 async_chunk 特有分支：如果没有新 token 可跑，但 connector 已经 done，就放进 <code>_pending_finish_reqs</code>；否则继续等，不制造 placeholder 空跑。</td></tr>
+        <tr><td>L145-L169</td><td>处理 waiting request。L160-L169 如果 async_chunk 下 prompt 为空，说明还没收到 upstream codec/audio codes：如果 connector done，就 pending finish；否则把 request 暂时挪到 skipped waiting，等待 adapter 下次收到 chunk。</td></tr>
+        <tr><td>L205-L219</td><td>如果本轮没 schedule 任何 token，async_chunk 模式不能 fallback 到 base scheduler，因为 base scheduler 不理解空 prompt + 等 connector chunk 的状态；非 async_chunk 才 fallback。</td></tr>
+        <tr><td>L227-L286</td><td>组装 <code>SchedulerOutput</code>，包括 scheduled new/cached requests、block ids、token 数、finished ids 等。Code2Wav 这类 generation stage 的 fast path 倾向一次吃完当前 chunk。</td></tr>
+        <tr><td>L301-L330</td><td>把 base <code>NewRequestData</code> 重新包装成 <code>OmniNewRequestData</code>，补上 <code>external_req_id</code>、<code>prompt_embeds</code>、<code>additional_information</code>。L328-L329 调 chunk adapter 的 postprocess，清理 ready chunk 标记。</td></tr>
+        <tr><td>L331-L347</td><td>无论包装是否异常，finally 都 restore adapter 队列和 input coordinator 队列。否则 WAITING_FOR_CHUNK 的 request 可能永远丢在 adapter 内部 deque。</td></tr>
+      </table>
+
+      <h3>8.8 <code>OmniChunkTransferAdapter</code>：chunk put/get、segment finish 逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L41-L69</td><td>初始化 connector 和 chunk 状态。<code>put_req_chunk/get_req_chunk</code> 是 per-request chunk id；<code>finished_requests</code> 是整条 request done；<code>segment_finished_requests</code> 是当前 segment done；<code>requests_num_chunks_sent</code> 是发送水位；<code>_pending_streaming_prefills</code> 是 Qwen3 streaming prefill 暂存。</td></tr>
+        <tr><td>L76-L83</td><td><code>_confirmed_num_computed_tokens</code> 用 <code>num_computed_tokens - num_output_placeholders</code> 算 confirmed watermark。async scheduling 会提前增加 computed tokens，这里必须扣掉未确认 placeholder。</td></tr>
+        <tr><td>L102-L123</td><td><code>load_async</code> 是接收端注册。Stage-0 没上游，所以直接 return；其他 stage 把 request 放进 <code>_pending_load_reqs</code>，唤醒 recv loop。</td></tr>
+        <tr><td>L125-L148</td><td><code>save_async</code> 是发送端入口。L136-L141 的注释说明 <code>is_segment_finished</code> 和 request finished 分离：realtime request 可以结束一个音频片，但同 external request id 继续下一片。</td></tr>
+        <tr><td>L148-L162</td><td><code>is_finished = request.is_finished() and not request.resumable</code>，只有非 resumable 的 finished 才是整条 request terminal。随后用 confirmed watermark 防止重复或倒退发送 chunk。</td></tr>
+        <tr><td>L163-L171</td><td>把 <code>pooling_output</code>、request、<code>is_finished</code>、<code>is_segment_finished</code> 打成 task，放进 save queue 并唤醒 save loop。真正 tensor 处理在后台线程 <code>_send_single_request</code>。</td></tr>
+        <tr><td>L173-L194</td><td><code>_poll_single_request</code> 构造 connector get key：<code>{external_req_id}_{target_stage_id}_{chunk_id}</code>，非阻塞 get。没拿到 payload 返回 false，scheduler 会继续把 request 保持在 waiting-for-chunk 逻辑里。</td></tr>
+        <tr><td>L196-L213</td><td>拿到 payload 后递增 get chunk id，读取 <code>meta.finished</code> 和 <code>meta.is_segment_finished</code>。AR 下游把 payload 放进 <code>request.additional_information</code>；如果 chunk_id > 0 且 request resumable，就调用 <code>construct_next_stage_streaming_input_prompt</code> 更新下一 segment prompt。</td></tr>
+        <tr><td>L214-L254</td><td>generation 下游路径：如果有 terminal/segment flag 就记录；从 <code>codes.audio</code> 生成 <code>request.prompt_token_ids</code>；把除 <code>codes</code> 外的 payload 合并进 <code>additional_information</code>；最后把 <code>num_computed_tokens</code> 归零，表示新 chunk 要重新消费。</td></tr>
+        <tr><td>L256-L268</td><td>如果是空 chunk 且不是 finished，返回 false，继续等待，防止 Code2Wav 在没有 DAC frame 时提前 schedule。否则把 request id 放进 <code>_finished_load_reqs</code>，表示 chunk ready。</td></tr>
+        <tr><td>L272-L293</td><td><code>_send_single_request</code> 解出 task，计算 put key，调用模型自定义 <code>custom_process_next_stage_input_func</code> 生成 <code>OmniPayloadStruct</code>。这里把 <code>is_segment_finished</code> 作为 <code>is_finished</code> 传给 processor，是因为很多 processor 把它当 flush 信号。</td></tr>
+        <tr><td>L298-L307</td><td>如果 processor 没产出 payload，且也不是 segment/request finish，就不发送；如果是 finish marker，即使没有 tensor 也构造空 payload。随后强制写入 <code>meta.finished</code> 和 <code>meta.is_segment_finished</code>。</td></tr>
+        <tr><td>L309-L334</td><td>connector put 成功后递增 put chunk id。只有 <code>meta.finished</code> 为真才 cleanup 整条 request 的 sender/receiver 状态；segment finished 不能 cleanup request，因为下一片还要复用 chunk id 状态。</td></tr>
+        <tr><td>L336-L342</td><td>segment finished 后清理本 segment 的 code prompt cache、发送水位、input coordinator cache。这样下一片从新的 segment 水位开始，但 request 本身仍可继续。</td></tr>
+        <tr><td>L343-L350</td><td><code>is_done_receiving_chunks</code> 同时检查整条 request finished 和 segment finished。下游 scheduler 用它决定“本片不再等更多 chunk”，但下一次 streaming update 会清掉 segment flag。</td></tr>
+        <tr><td>L417-L433</td><td><code>process_pending_chunks</code> 在 scheduler 每轮前处理 waiting/running queue。Stage-0 直接 return；其他 stage 把没 chunk 的 request 移到 <code>WAITING_FOR_CHUNK</code>，chunk ready 后恢复到 waiting/running。</td></tr>
+        <tr><td>L494-L523</td><td><code>_process_chunk_queue</code> 是队列移动细节：ready chunk 不重复 load；done receiving 的 request 不再 load；否则 <code>load_async</code> 并设 <code>WAITING_FOR_CHUNK</code>。收到 chunk 后从 <code>finished_load_reqs</code> 移除并标记 <code>requests_with_ready_chunks</code>。</td></tr>
+      </table>
+
+      <h3>8.9 <code>adapter.py</code>：下一 stage streaming prompt 拼接逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L14-L24</td><td><code>try_send_via_connector</code> 是 full-payload/显式 connector 路径的发送 helper，不是 async_chunk 的主路径，但它展示了普通 connector payload 的形状：engine inputs、sampling params、metadata。</td></tr>
+        <tr><td>L31-L47</td><td>发送前清理 original prompt 里的不可序列化 multimodal feature 字段，防止 msgpack 编码失败。这里不影响 async_chunk tensor 数据面，因为真正 tensor chunk 由 <code>OmniChunkTransferAdapter</code> 处理。</td></tr>
+        <tr><td>L48-L60</td><td>组装 payload 并 <code>connector.put</code>。metadata 里带 stage transition 和 timestamp，主要用于调试和 metrics。</td></tr>
+        <tr><td>L62-L90</td><td>put 成功后向下一 stage queue 发轻量通知，并记录 transfer metrics。async_chunk 模式避免了这条显式 queue 通知，而是让下游 scheduler 自己 poll chunk。</td></tr>
+        <tr><td>L104-L152</td><td><code>try_recv_via_connector</code> 是 full-payload receive helper：如果 task 标记 <code>from_connector</code>，按 from/to stage 找 connector，get payload，再取 <code>engine_inputs</code> 返回。</td></tr>
+        <tr><td>L166-L180</td><td>如果不是 connector payload，就从 IPC/shared memory 里加载 <code>engine_inputs</code>。这解释了 vLLM-Omni 里有两种 stage 间传输：显式 Orchestrator 转发和 async_chunk poll。</td></tr>
+        <tr><td>L186-L216</td><td><code>compute_talker_prompt_ids_length</code> 用 Qwen chat 模板里的 <code>im_start</code>、system、user、assistant token 来估计 Talker placeholder prompt 长度。它把 user 段长度累计起来，并在最后 assistant 段加固定 9 个 token。async_chunk prewarm 和 streaming prompt update 都靠这个长度给下游分配占位 prompt。</td></tr>
+        <tr><td>L219-L230</td><td><code>construct_next_stage_streaming_input_prompt</code> 的 docstring 说明了这个 helper 的四件事：保留 scheduler watermark，把已计算 output token 移进 prompt，追加新 segment 的 placeholder prompt，刷新 block hashes。它只在 downstream async_chunk request 收到 <code>chunk_id > 0</code> 且 <code>request.resumable</code> 时调用。</td></tr>
+        <tr><td>L231-L234</td><td>从 payload 的 <code>ids.prompt</code> 取上游 prompt ids；没有 prompt ids 直接 return。没有 prompt ids 时无法估计下一段 Talker placeholder 长度，也就不能安全扩展 prompt。</td></tr>
+        <tr><td>L235-L241</td><td>保存当前 <code>num_computed_tokens</code>，把已经计算过的 output token 从 <code>_all_token_ids[num_prompt_tokens:num_computed_tokens]</code> 取出来，然后删除 <code>num_computed_tokens</code> 之后的乐观 token，清空 <code>_output_token_ids</code>，最后把 kept output token 追加到 <code>prompt_token_ids</code>。这一步等价于“把已确认输出固化为下一段 prompt 上下文”。</td></tr>
+        <tr><td>L242-L247</td><td>根据上游 <code>prompt_token_ids</code> 估计新 Talker prompt 长度，生成对应数量的零 placeholder，同时追加到 <code>_all_token_ids</code> 和 <code>prompt_token_ids</code>。最后 <code>update_block_hashes()</code> 并刷新 <code>num_prompt_tokens</code>，让 scheduler 后续 KV/block 分配看到新的 prompt 形状。</td></tr>
+      </table>
+
+      <h3>8.10 <code>qwen3_omni.py</code> stage processor：tensor/id 对齐逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L264-L287</td><td><code>_construct_thinker2talker_streaming_input_async_chunk</code> 先取 external request id、output token ids、speaker/language、finished flag，并把 Thinker embedding/hidden state detach 到 CPU。connector payload 需要跨线程/进程序列化，不能携带还挂在计算图上的 GPU tensor。</td></tr>
+        <tr><td>L289-L306</td><td>如果已经有 output token 且 <code>thinker_emb.shape[0] > 1</code>，说明这次 chunk 是新 streaming segment 的 prefill。它构造带 <code>embed.prefill</code>、<code>hidden_states.output</code>、<code>ids.all/prompt</code> 的 payload，缓存到 <code>_pending_streaming_prefills</code>，然后返回 <code>None</code>。返回 None 的含义是“先别发 Talker，等下一次 decode row 来对齐”。</td></tr>
+        <tr><td>L307-L323</td><td>如果当前是 decode chunk，先尝试取出上一段缓存的 prefill；如果存在，就把 cached prefill 和当前 decode embedding/hidden state 在 dim=0 拼起来发送。这样 Talker 收到的 ids 与 tensor row 数一致。</td></tr>
+        <tr><td>L324-L333</td><td>没有 cached prefill 时，普通 decode chunk 只发送 <code>embed.decode</code>、<code>hidden_states.output</code> 和 output token ids。它对应“本 segment 已经进入逐 token decode”的稳定状态。</td></tr>
+        <tr><td>L334-L344</td><td>如果没有 output token，且不是 finished，就返回 None，避免发送 async placeholder 或 stop token embedding；如果是 finished，则发送一个带 finished meta 的 payload，保证下游能收到 segment/request finish marker。</td></tr>
+        <tr><td>L347-L370</td><td>两个 dataclass 保存 Qwen3 streaming bridge 状态。<code>last_prompt_len</code>、<code>last_output_len</code> 用于 Thinker->Talker delta；<code>talker2code2wav_last_seq_len</code> 用于 Talker->Code2Wav codec delta。状态挂在 Orchestrator 的 <code>streaming_context.bridge_states</code> 下。</td></tr>
+        <tr><td>L373-L409</td><td><code>_get_streaming_talker_tokens</code> 计算当前 segment 的 prompt/output 增量。L393-L394 如果 Orchestrator 给了 <code>new_prompt_len_snapshot</code>，先从 prompt tail 切掉下一片刚追加的输入；L398-L399 按上次长度切 delta；L401-L407 更新或清空游标。</td></tr>
+        <tr><td>L412-L426</td><td><code>_get_streaming_codec_delta_len</code> 计算 Talker codec 序列新增长度。L420 取上次 seq len；L421 做差；L422 故意写 <code>cur_seq_len + 1</code>，给下一轮跳过当前已处理边界；finished 时 L423-L425 清零，避免串到下一 request。</td></tr>
+        <tr><td>L434-L466</td><td><code>thinker2talker_async_chunk</code> 先取 request external id 和 chunk id，验证 pooling_output 是 dict，抽取 Thinker 的 embed layer 0 和 hidden layer 24。缺任一 tensor 就返回 None，避免发半包。</td></tr>
+        <tr><td>L473-L504</td><td>chunk 0 是首个 prefill：构造包含 prefill embedding、tts bos/eos/pad、hidden output、all/prompt ids 的 payload。未 finished 时先缓存，等 prefill shape 覆盖 prompt 后再发，避免 Talker 提前消费不完整 prompt。</td></tr>
+        <tr><td>L505-L527</td><td>非首 chunk：如果 <code>request.resumable</code>，转入 streaming helper；否则正常 async_chunk decode 理论上每次只有一行 embedding，超过一行就 warning 并跳过。最后构造 decode payload。</td></tr>
+        <tr><td>L611-L716</td><td><code>thinker2talker</code> 是 non-async_chunk 显式转发路径。L641-L655 对每个 Thinker output 计算 streaming delta；L659-L672 从 multimodal output 抽 embedding/hidden；L674-L685 可合并 PD prefill；L686-L714 构造 Talker <code>OmniTokensPrompt</code>，prompt ids 是按 Talker prompt length 填的 placeholder。</td></tr>
+        <tr><td>L719-L794</td><td><code>thinker2talker_token_only</code> 是 full-payload connector 路径：先验证 output 有必要 tensor，再用 streaming delta 算 placeholder prompt 长度；bulk tensor 由 worker connector buffer 提供，这里只转发 prompt 长度和 speaker/language 小字段。</td></tr>
+        <tr><td>L802-L824</td><td><code>talker2code2wav_async_chunk</code> 先验证 pooling output 里有 <code>codes.audio</code>，再从 connector config 读取 <code>codec_chunk_frames</code> 和 <code>codec_left_context_frames</code>。这两个参数决定多少 codec frame 聚成一次 vocoder 输入，以及左上下文带多少。</td></tr>
+        <tr><td>L826-L854</td><td>过滤空 codes、全 0 codes、stop token codec frame。这里防止 terminal token 生成伪音频，也防止空 chunk 让 Code2Wav 空跑。</td></tr>
+        <tr><td>L856-L877</td><td>把 codec codes 转成扁平 list，按 request 累积；未达到 chunk size 且未 finished 就返回 None。到达边界后计算 left context，取最近窗口，转成 <code>CodesStruct(audio=...)</code>，并在 meta 里写 <code>left_context_size</code> 和 <code>finished</code>。</td></tr>
+      </table>
+
+      <h3>8.11 <code>OmniGPUModelRunner</code>：同 request 新 segment 进入 runner 逐行</h3>
+      <table class="codewalk">
+        <tr><th>行号</th><th>逐行解释</th></tr>
+        <tr><td>L437-L443</td><td>runner 处理 <code>scheduled_new_reqs</code> 时，如果 <code>req_id in self.requests</code>，说明这不是全新 request，而是 streaming input 的同一 request 被新 segment 重新 schedule。于是先更新 streaming additional info，再调用 <code>_update_streaming_request</code>。</td></tr>
+        <tr><td>L1809-L1817</td><td><code>_update_streaming_input_additional_info</code> 从 <code>model_intermediate_buffer</code> 取 cached additional info，写入 <code>meta.num_processed_tokens=0</code> 和 <code>meta.resumable=True</code>，再同步到 <code>req_state.additional_information_cpu</code>。这保证 Talker prefill 对新 segment 从 0 开始处理，而不是沿用上一段已处理 token 数。</td></tr>
+      </table>
+    </section>
+
     <section id="state">
-      <h2>8. 关键状态与不变量</h2>
+      <h2>9. 关键状态与不变量</h2>
       <table>
         <tr><th>状态</th><th>位置</th><th>不变量</th></tr>
         <tr><td><code>external_req_id</code></td><td><code>OmniRequest</code> / connector key</td><td>connector put/get key 用 external id 跨 stage 对齐；内部 request id 可带随机 suffix。</td></tr>
@@ -817,7 +1018,7 @@ payload_data.meta.is_segment_finished = is_segment_finished</code></pre>
     </section>
 
     <section id="tests">
-      <h2>9. 测试覆盖与读码顺序</h2>
+      <h2>10. 测试覆盖与读码顺序</h2>
       <div class="grid">
         <div>
           <h3>PR 新增/修改的关键测试</h3>
