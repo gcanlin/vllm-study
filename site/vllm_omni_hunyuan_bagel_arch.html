@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>vLLM-Omni：Hunyuan-Image3.0 与 BAGEL 架构走读</title>
+<style>
+  :root{
+    --ink:#20242a; --muted:#5f6875; --bg:#f7f8fa; --panel:#ffffff;
+    --line:#d8dee6; --blue:#2563eb; --green:#168a5b; --orange:#b45f06;
+    --purple:#7c3aed; --red:#c2410c; --cyan:#0e7490; --dark:#111827;
+  }
+  body{
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    max-width:1260px; margin:24px auto; padding:0 24px 48px;
+    color:var(--ink); background:var(--bg); line-height:1.72;
+  }
+  h1{ border-bottom:3px solid var(--blue); padding-bottom:10px; margin-top:18px; }
+  h2{ border-left:5px solid var(--blue); padding-left:12px; margin-top:46px; color:#123b7a; }
+  h3{ margin-top:28px; color:#0f4d84; }
+  h4{ margin:22px 0 8px; color:#27313d; }
+  code,pre{ font-family:"JetBrains Mono","Fira Code",Consolas,monospace; }
+  code{ background:#edf1f7; color:#9f1239; padding:2px 6px; border-radius:4px; font-size:.92em; }
+  pre{ background:#0d1117; color:#e6edf3; padding:14px 16px; border-radius:8px; overflow-x:auto; font-size:13px; line-height:1.55; }
+  pre code{ background:transparent; color:inherit; padding:0; border-radius:0; font-size:inherit; }
+  table{ width:100%; border-collapse:collapse; margin:14px 0; font-size:13.5px; background:#fff; }
+  th,td{ border:1px solid var(--line); padding:8px 11px; text-align:left; vertical-align:top; }
+  th{ background:#eef3f8; font-weight:650; }
+  a{ color:#0b63ce; text-decoration:none; }
+  .small{ color:var(--muted); font-size:13px; }
+  .toc{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 18px; }
+  .note{ background:#fff8db; border-left:4px solid #d6a300; padding:10px 14px; border-radius:4px; margin:14px 0; }
+  .tip{ background:#e9f6ff; border-left:4px solid var(--blue); padding:10px 14px; border-radius:4px; margin:14px 0; }
+  .warn{ background:#fff0e8; border-left:4px solid var(--red); padding:10px 14px; border-radius:4px; margin:14px 0; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  .grid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; }
+  @media (max-width:980px){ .grid2,.grid3{ grid-template-columns:1fr; } }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .card h4{ margin-top:0; }
+  .pill{ display:inline-block; padding:2px 8px; border-radius:12px; font-size:11.5px; color:#fff; margin-right:4px; }
+  .p-blue{ background:var(--blue); } .p-green{ background:var(--green); }
+  .p-orange{ background:var(--orange); } .p-purple{ background:var(--purple); }
+  .p-cyan{ background:var(--cyan); } .p-dark{ background:var(--dark); }
+  .flowline{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0; }
+  .node-chip{ border:1px solid #aeb8c5; background:#fff; border-radius:6px; padding:6px 9px; font-size:12.5px; }
+  .arrow{ color:#707987; font-size:18px; font-weight:700; }
+  svg.diagram{ display:block; width:100%; height:auto; background:#fff; border:1px solid var(--line); border-radius:8px; margin:10px 0 14px; }
+  .legend{ display:flex; flex-wrap:wrap; gap:14px; margin:8px 0 14px; font-size:13px; color:#3b4450; }
+  .sw{ display:inline-block; width:13px; height:13px; border-radius:3px; margin-right:5px; vertical-align:-2px; }
+  .footer-note{ font-size:12.5px; color:var(--muted); border-top:1px dashed var(--line); padding-top:14px; margin-top:44px; }
+</style>
+<link rel="stylesheet" href="./nav.css">
+</head>
+<body>
+<nav class="study-topnav" aria-label="Study note navigation">
+  <a class="study-topnav__brand" href="./">vLLM Study</a>
+  <div class="study-topnav__links">
+    <a class="study-topnav__link" href="./">DeepSeek V3 FusedMoE</a>
+    <a class="study-topnav__link" href="./qwen3_model_runner.html">Qwen3 Runner</a>
+    <a class="study-topnav__link" href="./qwen3_structure.html">Qwen3 Structure</a>
+    <a class="study-topnav__link" href="./qwen3_omni_streaming_inputs.html">Qwen3 Omni Streaming</a>
+    <a class="study-topnav__link" href="./vllm_cp_pcp_dcp.html">CP / PCP / DCP</a>
+    <a class="study-topnav__link" href="./vllm_omni_hunyuan_bagel_arch.html" aria-current="page">Omni Hunyuan/BAGEL</a>
+    <a class="study-topnav__link" href="./vllm_prefix_cache.html">Prefix Cache</a>
+    <a class="study-topnav__link" href="./vllm_omni_streaming.html">Omni Streaming</a>
+    <a class="study-topnav__link" href="./vllm_sampler.html">Sampler</a>
+    <a class="study-topnav__link" href="./vllm_vit_dp.html">ViT DP</a>
+    <a class="study-topnav__link" href="./vime_framework.html">Vime</a>
+  </div>
+</nav>
+
+<h1>vLLM-Omni：Hunyuan-Image3.0 与 BAGEL 架构走读</h1>
+
+<p class="small">本文只基于当前仓库里的 <code>vllm-omni</code> 源码整理，不引入外部资料。目标是先把 Hunyuan-Image3.0 和 BAGEL 的模型组件及阶段串起来，再抽象出 vllm-omni 对这类“AR/Thinker + DiT/VAE”模型复用的公共框架。</p>
+
+<div class="toc">
+  <b>目录</b>
+  <ol>
+    <li><a href="#sec1">背景：为什么这两类图像模型都适合 vllm-omni</a></li>
+    <li><a href="#sec2">Hunyuan-Image3.0：AR 产出 CoT / ratio，DiT 负责去噪成图</a></li>
+    <li><a href="#sec3">BAGEL：Thinker 产出 KV，DiT 用三路 CFG 分支成图</a></li>
+    <li><a href="#sec4">vllm-omni 只负责把模型组件接起来</a></li>
+    <li><a href="#sec5">一次请求从 API 到图片的 debug walkthrough</a></li>
+    <li><a href="#sec6">关键源码入口与新增模型 checklist</a></li>
+    <li><a href="#sec7">总结</a></li>
+  </ol>
+</div>
+
+<h2 id="sec1">1. 背景：为什么这两类图像模型都适合 vllm-omni</h2>
+
+<p>Hunyuan-Image3.0 和 BAGEL 都不是“一个 diffusion pipeline 从 prompt 直接到图片”的简单形态。它们都需要一个语言/多模态前端先把文本、图片、推理链或条件上下文组织好，再交给图像生成后端：</p>
+
+<table>
+  <tr><th>模型</th><th>前端 stage</th><th>后端 stage</th><th>跨 stage 交付物</th><th>vllm-omni 复用点</th></tr>
+  <tr>
+    <td>Hunyuan-Image3.0</td>
+    <td><code>AR</code>，<code>HunyuanImage3ForCausalMM</code></td>
+    <td><code>dit</code>，<code>HunyuanImage3Pipeline</code></td>
+    <td>AR 文本中的 <code>&lt;/recaption&gt;</code> 前缀、<code>&lt;img_ratio_*&gt;</code> token、原始条件图、可选 AR KV</td>
+    <td><code>custom_process_input_func=ar2diffusion</code>，KV connector，diffusion runner</td>
+  </tr>
+  <tr>
+    <td>BAGEL-7B-MoT</td>
+    <td><code>thinker</code>，<code>OmniBagelForConditionalGeneration</code></td>
+    <td><code>dit</code>，<code>BagelPipeline</code></td>
+    <td>主请求 KV、CFG companion 请求 KV、CFG role 元数据</td>
+    <td><code>prompt_expand_func</code>，<code>cfg_kv_collect_func</code>，KV connector</td>
+  </tr>
+</table>
+
+<p>所以 vllm-omni 的价值不只是“服务 diffusion 模型”，而是把多阶段模型拆成可调度、可部署、可跨设备传输的 stage：</p>
+
+<div class="flowline">
+  <span class="node-chip">OpenAI-compatible API</span><span class="arrow">→</span>
+  <span class="node-chip">AsyncOmniEngine</span><span class="arrow">→</span>
+  <span class="node-chip">Stage 0: LLM_AR</span><span class="arrow">→</span>
+  <span class="node-chip">model-specific bridge</span><span class="arrow">→</span>
+  <span class="node-chip">Stage 1: DIFFUSION</span><span class="arrow">→</span>
+  <span class="node-chip">image/text output</span>
+</div>
+
+<h2 id="sec2">2. Hunyuan-Image3.0：AR 产出 CoT / ratio，DiT 负责去噪成图</h2>
+
+<h3>2.1 Pipeline 拓扑</h3>
+
+<p>Hunyuan-Image3.0 的默认 pipeline 在 <code>vllm_omni/model_executor/models/hunyuan_image3/pipeline.py</code>，model_type 是 <code>hunyuan_image_3_moe</code>。它声明两个 stage：</p>
+
+<pre><code>HUNYUAN_IMAGE3_PIPELINE = PipelineConfig(
+    model_type="hunyuan_image_3_moe",
+    stages=(
+        StagePipelineConfig(
+            stage_id=0,
+            model_stage="AR",
+            execution_type=StageExecutionType.LLM_AR,
+            input_sources=(),
+            final_output=False,
+            engine_output_type="latent",
+        ),
+        StagePipelineConfig(
+            stage_id=1,
+            model_stage="dit",
+            execution_type=StageExecutionType.DIFFUSION,
+            input_sources=(0,),
+            final_output=True,
+            final_output_type="image",
+            custom_process_input_func=(
+                "vllm_omni.model_executor.stage_input_processors."
+                "hunyuan_image3.ar2diffusion"
+            ),
+        ),
+    ),
+)</code></pre>
+
+<p>部署 YAML <code>vllm_omni/deploy/hunyuan_image_3_moe.yaml</code> 把 stage 0 放在 <code>devices: "0,1"</code>，stage 1 放在 <code>devices: "2,3"</code>，并打开 <code>omni_kv_config.need_send_cache</code> / <code>need_recv_cache</code>。这说明 Hunyuan 的跨 stage 信息分两条路：一条是显式 prompt bridge，另一条是 KV cache connector。</p>
+
+<div class="legend">
+  <span><span class="sw" style="background:#dbeafe"></span>AR / tokenizer / 文本链路</span>
+  <span><span class="sw" style="background:#dcfce7"></span>条件图像编码</span>
+  <span><span class="sw" style="background:#fef3c7"></span>DiT / VAE 成图</span>
+  <span><span class="sw" style="background:#f3e8ff"></span>vllm-omni connector</span>
+</div>
+
+<svg class="diagram" viewBox="0 0 1200 570" role="img" aria-label="Hunyuan-Image3.0 architecture">
+  <defs>
+    <marker id="arrowH" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#4b5563"></path>
+    </marker>
+    <style>
+      .box{fill:#fff;stroke:#cbd5e1;stroke-width:1.4;rx:8}
+      .ar{fill:#dbeafe;stroke:#2563eb}.img{fill:#dcfce7;stroke:#168a5b}
+      .dit{fill:#fef3c7;stroke:#b45f06}.omni{fill:#f3e8ff;stroke:#7c3aed}
+      .txt{font:13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;fill:#1f2937}
+      .sub{font:11px Consolas,monospace;fill:#4b5563}
+      .edge{stroke:#4b5563;stroke-width:1.8;fill:none;marker-end:url(#arrowH)}
+      .dash{stroke-dasharray:6 5}
+    </style>
+  </defs>
+
+  <rect x="25" y="38" width="180" height="92" class="box ar"></rect>
+  <text x="45" y="70" class="txt">用户请求</text>
+  <text x="45" y="96" class="sub">prompt / image / size</text>
+  <text x="45" y="114" class="sub">use_system_prompt</text>
+
+  <rect x="250" y="34" width="230" height="122" class="box ar"></rect>
+  <text x="270" y="66" class="txt">Stage 0 · AR</text>
+  <text x="270" y="91" class="sub">HunyuanImage3ForCausalMM</text>
+  <text x="270" y="112" class="sub">tokenizer + mRoPE + MoE LLM</text>
+  <text x="270" y="133" class="sub">outputs[0].text / token_ids</text>
+
+  <rect x="250" y="205" width="230" height="116" class="box img"></rect>
+  <text x="270" y="237" class="txt">条件图片预处理</text>
+  <text x="270" y="262" class="sub">HunyuanImage3ImageProcessor</text>
+  <text x="270" y="283" class="sub">VAE tensor + SigLIP2 tensor</text>
+  <text x="270" y="304" class="sub">batch_cond_image_info</text>
+
+  <rect x="535" y="62" width="270" height="208" class="box omni"></rect>
+  <text x="555" y="94" class="txt">ar2diffusion bridge</text>
+  <text x="555" y="122" class="sub">_extract_ratio_index(token_ids)</text>
+  <text x="555" y="143" class="sub">_build_ratio_size_table(base_size)</text>
+  <text x="555" y="164" class="sub">_truncate_at_cot_end(text)</text>
+  <text x="555" y="185" class="sub">forward multi_modal_data["image"]</text>
+  <text x="555" y="216" class="txt">diffusion_input</text>
+  <text x="555" y="242" class="sub">{prompt,height,width,extra.ar_generated_text}</text>
+
+  <rect x="535" y="322" width="270" height="96" class="box omni"></rect>
+  <text x="555" y="354" class="txt">KV connector</text>
+  <text x="555" y="380" class="sub">stage0 need_send_cache</text>
+  <text x="555" y="401" class="sub">stage1 need_recv_cache</text>
+
+  <rect x="860" y="42" width="290" height="120" class="box dit"></rect>
+  <text x="880" y="74" class="txt">Stage 1 · HunyuanImage3Pipeline</text>
+  <text x="880" y="100" class="sub">prepare_model_inputs()</text>
+  <text x="880" y="121" class="sub">chat template + CoT + cond images</text>
+  <text x="880" y="142" class="sub">2D RoPE + CFG factor</text>
+
+  <rect x="860" y="200" width="290" height="142" class="box dit"></rect>
+  <text x="880" y="232" class="txt">HunyuanImage3Model / DiT</text>
+  <text x="880" y="258" class="sub">patch_embed / timestep_emb</text>
+  <text x="880" y="279" class="sub">vision_model + vision_aligner</text>
+  <text x="880" y="300" class="sub">AR KV reuse: ar_kv_data</text>
+  <text x="880" y="321" class="sub">FlowMatchEulerDiscreteScheduler</text>
+
+  <rect x="860" y="380" width="290" height="90" class="box dit"></rect>
+  <text x="880" y="412" class="txt">VAE decode</text>
+  <text x="880" y="438" class="sub">DistributedAutoencoderKLHunyuan</text>
+  <text x="880" y="459" class="sub">DiffusionOutput(output=image)</text>
+
+  <path class="edge" d="M205 82 H250"></path>
+  <path class="edge" d="M480 96 C510 96 510 120 535 120"></path>
+  <path class="edge" d="M205 102 C225 185 235 248 250 260"></path>
+  <path class="edge" d="M480 264 H535"></path>
+  <path class="edge" d="M805 150 H860"></path>
+  <path class="edge dash" d="M480 146 C518 352 520 370 535 370"></path>
+  <path class="edge dash" d="M805 370 C830 370 835 286 860 286"></path>
+  <path class="edge" d="M1005 162 V200"></path>
+  <path class="edge" d="M1005 342 V380"></path>
+</svg>
+
+<h3>2.2 Hunyuan bridge 的关键语义</h3>
+
+<p><code>ar2diffusion</code> 不只是把 AR 文本复制给 DiT，它还修正目标尺寸，并把图片条件重新挂到 diffusion prompt 上：</p>
+
+<pre><code>ratio_idx = _extract_ratio_index(generated_token_ids)
+if ratio_idx is not None:
+    base_size = int(original_prompt.get("image_base_size", 1024))
+    size_table = _build_ratio_size_table(base_size)
+    if 0 &lt;= ratio_idx &lt; len(size_table):
+        height, width = size_table[ratio_idx]
+
+cot_text_for_dit = _truncate_at_cot_end(generated_text)
+
+diffusion_input = {
+    "prompt": text_prompt,
+    "height": height,
+    "width": width,
+    "extra": {"ar_generated_text": cot_text_for_dit},
+}</code></pre>
+
+<div class="tip">理解 Hunyuan 的核心：AR stage 负责“想清楚要生成什么”和“决定图像比例”，DiT stage 负责“把这个文本/比例/条件图像变成 latent denoising 轨迹”。如果没有 <code>ar2diffusion</code> 的 ratio token 解析，image editing 场景很容易退回 serving 层携带的默认宽高。</div>
+
+<h3>2.3 Hunyuan 模型内部组件图</h3>
+
+<p>从模型本身看，Hunyuan-Image3.0 有两套很像的多模态组件：AR stage 用它们把输入图像变成可插入 LLM 的 embedding；DiT stage 再用同类组件把条件图和生成 latent 一起送进 diffusion transformer。</p>
+
+<svg class="diagram" viewBox="0 0 1200 650" role="img" aria-label="Hunyuan internal components">
+  <defs>
+    <marker id="arrowHI" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#374151"></path>
+    </marker>
+    <style>
+      .box{fill:#fff;stroke:#cbd5e1;stroke-width:1.4;rx:8}
+      .txt{font:13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;fill:#1f2937}
+      .sub{font:11px Consolas,monospace;fill:#4b5563}
+      .llm{fill:#dbeafe;stroke:#2563eb}.vis{fill:#dcfce7;stroke:#168a5b}
+      .lat{fill:#fef3c7;stroke:#b45f06}.pos{fill:#f3e8ff;stroke:#7c3aed}
+      .edge{stroke:#374151;stroke-width:1.7;fill:none;marker-end:url(#arrowHI)}
+      .dash{stroke-dasharray:6 5}
+    </style>
+  </defs>
+
+  <text x="55" y="36" class="txt">Stage 0 · AR / CausalMM：输入理解 + 生成 recaption / ratio token</text>
+  <rect x="45" y="62" width="230" height="116" class="box vis"></rect>
+  <text x="65" y="94" class="txt">HunyuanImage3Processor</text>
+  <text x="65" y="120" class="sub">resize / crop / reso_group</text>
+  <text x="65" y="141" class="sub">vit_pixel_values</text>
+  <text x="65" y="162" class="sub">vae_pixel_values + grid_hw</text>
+
+  <rect x="330" y="50" width="240" height="138" class="box vis"></rect>
+  <text x="350" y="82" class="txt">双图像编码</text>
+  <text x="350" y="108" class="sub">VAE encode → latents</text>
+  <text x="350" y="129" class="sub">UNetDown patch_embed(latents,t)</text>
+  <text x="350" y="150" class="sub">SigLIP2VisionTransformer</text>
+  <text x="350" y="171" class="sub">LightProjector(vit_hidden→hidden)</text>
+
+  <rect x="625" y="50" width="240" height="138" class="box pos"></rect>
+  <text x="645" y="82" class="txt">embedding 拼接</text>
+  <text x="645" y="108" class="sub">&lt;timestep&gt; → TimestepEmbedder(0)</text>
+  <text x="645" y="129" class="sub">VAE tokens</text>
+  <text x="645" y="150" class="sub">&lt;joint_img_sep&gt;</text>
+  <text x="645" y="171" class="sub">ViT tokens</text>
+
+  <rect x="920" y="45" width="230" height="148" class="box llm"></rect>
+  <text x="940" y="77" class="txt">HunyuanModel</text>
+  <text x="940" y="103" class="sub">embed_tokens + mRoPE</text>
+  <text x="940" y="124" class="sub">decoder layers / MoE</text>
+  <text x="940" y="145" class="sub">ParallelLMHead</text>
+  <text x="940" y="166" class="sub">sample(): force transitions</text>
+  <text x="940" y="187" class="sub">&lt;img_size&gt; → ratio-only vocab</text>
+
+  <text x="55" y="275" class="txt">Stage 1 · DiT / HunyuanImage3Pipeline：条件图 + CoT + latent 去噪</text>
+  <rect x="45" y="305" width="230" height="128" class="box pos"></rect>
+  <text x="65" y="337" class="txt">prepare_model_inputs</text>
+  <text x="65" y="363" class="sub">chat template + cot_text</text>
+  <text x="65" y="384" class="sub">batch_gen_image_info</text>
+  <text x="65" y="405" class="sub">batch_cond_image_info</text>
+  <text x="65" y="426" class="sub">build_batch_2d_rope</text>
+
+  <rect x="330" y="300" width="240" height="140" class="box vis"></rect>
+  <text x="350" y="332" class="txt">条件图分两路</text>
+  <text x="350" y="358" class="sub">cond_vae_images → VAE encode</text>
+  <text x="350" y="379" class="sub">cond_timestep = 0</text>
+  <text x="350" y="400" class="sub">cond_vit_images → SigLIP2</text>
+  <text x="350" y="421" class="sub">vision_aligner → hidden</text>
+
+  <rect x="625" y="292" width="240" height="156" class="box lat"></rect>
+  <text x="645" y="324" class="txt">生成图 latent tokens</text>
+  <text x="645" y="350" class="sub">noise latent x_t</text>
+  <text x="645" y="371" class="sub">time_embed(t)</text>
+  <text x="645" y="392" class="sub">UNetDown patch_embed</text>
+  <text x="645" y="413" class="sub">AR KV reuse 可注入 image_attn</text>
+  <text x="645" y="434" class="sub">image_mask 定位生成 token</text>
+
+  <rect x="920" y="292" width="230" height="156" class="box llm"></rect>
+  <text x="940" y="324" class="txt">HunyuanImage3Model / DiT</text>
+  <text x="940" y="350" class="sub">self.model(... mode=gen_image)</text>
+  <text x="940" y="371" class="sub">ragged_final_layer</text>
+  <text x="940" y="392" class="sub">UNetUp final_layer</text>
+  <text x="940" y="413" class="sub">velocity / noise prediction</text>
+  <text x="940" y="434" class="sub">FlowMatch Euler step</text>
+
+  <rect x="920" y="505" width="230" height="82" class="box lat"></rect>
+  <text x="940" y="537" class="txt">VAE decode</text>
+  <text x="940" y="563" class="sub">DistributedAutoencoderKLHunyuan</text>
+  <text x="940" y="584" class="sub">latents → image</text>
+
+  <path class="edge" d="M275 120 H330"></path>
+  <path class="edge" d="M570 120 H625"></path>
+  <path class="edge" d="M865 120 H920"></path>
+  <path class="edge" d="M275 370 H330"></path>
+  <path class="edge" d="M570 370 H625"></path>
+  <path class="edge" d="M865 370 H920"></path>
+  <path class="edge" d="M1035 448 V505"></path>
+  <path class="edge dash" d="M1035 193 C1035 235 780 238 748 292"></path>
+</svg>
+
+<table>
+  <tr><th>组件</th><th>在 AR stage 的作用</th><th>在 DiT stage 的作用</th></tr>
+  <tr>
+    <td><code>AutoencoderKLConv3D / DistributedAutoencoderKLHunyuan</code></td>
+    <td>把输入图像编码成 VAE latent，再经 <code>UNetDown</code> 投到 hidden size，作为图片 token 插入 LLM 上下文。</td>
+    <td>条件图仍然走 VAE encode；生成结束后用 VAE decode 把最终 latent 还原成图。</td>
+  </tr>
+  <tr>
+    <td><code>Siglip2VisionTransformer + LightProjector</code></td>
+    <td>提供语义视觉 token，和 VAE token 之间用 <code>&lt;joint_img_sep&gt;</code> 隔开。</td>
+    <td>image editing / multi-image conditioning 时继续提供条件图语义特征。</td>
+  </tr>
+  <tr>
+    <td><code>HunyuanModel</code></td>
+    <td>标准 AR decoder，带 mRoPE；采样器会强制 <code>&lt;/think&gt; → &lt;recaption&gt;</code> 等阶段 token，并限制 ratio token。</td>
+    <td>同一类 transformer 作为 DiT 主体，输入是文本/条件图 token + 当前噪声 latent token，输出 diffusion prediction。</td>
+  </tr>
+  <tr>
+    <td><code>UNetDown / UNetUp</code></td>
+    <td><code>UNetDown</code> 把 VAE latent patch 化成 token embedding。</td>
+    <td><code>UNetDown</code> 处理当前噪声 latent，<code>UNetUp final_layer</code> 把 hidden states 转回 latent patch prediction。</td>
+  </tr>
+</table>
+
+<h2 id="sec3">3. BAGEL：Thinker 产出 KV，DiT 用三路 CFG 分支成图</h2>
+
+<h3>3.1 Pipeline 拓扑</h3>
+
+<p>BAGEL 的默认 pipeline 在 <code>vllm_omni/model_executor/models/bagel/pipeline.py</code>。它也是两阶段，但不是通过 <code>custom_process_input_func</code> 改写 prompt，而是通过 KV cache 让 DiT 直接复用 Thinker 的上下文。</p>
+
+<pre><code>BAGEL_PIPELINE = PipelineConfig(
+    model_type="bagel",
+    model_arch="OmniBagelForConditionalGeneration",
+    stages=(
+        StagePipelineConfig(
+            stage_id=0,
+            model_stage="thinker",
+            execution_type=StageExecutionType.LLM_AR,
+            prompt_expand_func="...bagel.expand_cfg_prompts",
+            omni_kv_config={
+                "need_send_cache": True,
+                "kv_transfer_criteria": {"type": "prefill_finished"},
+            },
+        ),
+        StagePipelineConfig(
+            stage_id=1,
+            model_stage="dit",
+            execution_type=StageExecutionType.DIFFUSION,
+            input_sources=(0,),
+            cfg_kv_collect_func="...bagel.collect_cfg_kv_caches",
+            omni_kv_config={"need_recv_cache": True},
+        ),
+    ),
+)</code></pre>
+
+<p><code>vllm_omni/deploy/bagel.yaml</code> 默认让 Thinker 和 DiT 同在 <code>devices: "0"</code>，stage 之间用 <code>SharedMemoryConnector</code>。多机或 RDMA 场景可以换 <code>MooncakeTransferEngineConnector</code>。</p>
+
+<svg class="diagram" viewBox="0 0 1200 610" role="img" aria-label="BAGEL architecture">
+  <defs>
+    <marker id="arrowB" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#4b5563"></path>
+    </marker>
+    <style>
+      .box{fill:#fff;stroke:#cbd5e1;stroke-width:1.4;rx:8}
+      .req{fill:#dbeafe;stroke:#2563eb}.cfg{fill:#f3e8ff;stroke:#7c3aed}
+      .kv{fill:#e0f2fe;stroke:#0e7490}.dit{fill:#fef3c7;stroke:#b45f06}
+      .vae{fill:#dcfce7;stroke:#168a5b}.txt{font:13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;fill:#1f2937}
+      .sub{font:11px Consolas,monospace;fill:#4b5563}.edge{stroke:#4b5563;stroke-width:1.8;fill:none;marker-end:url(#arrowB)}
+      .dash{stroke-dasharray:6 5}
+    </style>
+  </defs>
+
+  <rect x="28" y="45" width="175" height="96" class="box req"></rect>
+  <text x="48" y="77" class="txt">用户请求</text>
+  <text x="48" y="103" class="sub">modalities=["image"]</text>
+  <text x="48" y="124" class="sub">negative_prompt / img2img</text>
+
+  <rect x="245" y="28" width="240" height="145" class="box cfg"></rect>
+  <text x="265" y="61" class="txt">prompt_expand_func</text>
+  <text x="265" y="87" class="sub">expand_cfg_prompts()</text>
+  <text x="265" y="108" class="sub">gen: positive prompt</text>
+  <text x="265" y="129" class="sub">cfg_text: negative / empty</text>
+  <text x="265" y="150" class="sub">cfg_img: no-image branch</text>
+
+  <rect x="245" y="220" width="240" height="174" class="box req"></rect>
+  <text x="265" y="253" class="txt">Stage 0 · Thinker</text>
+  <text x="265" y="279" class="sub">OmniBagelForConditionalGeneration</text>
+  <text x="265" y="300" class="sub">Qwen2MoT + tokenizer</text>
+  <text x="265" y="321" class="sub">image/img2img processor</text>
+  <text x="265" y="352" class="txt">输出</text>
+  <text x="265" y="376" class="sub">primary KV + companion KV</text>
+
+  <rect x="540" y="68" width="250" height="160" class="box kv"></rect>
+  <text x="560" y="100" class="txt">OmniKVTransferManager</text>
+  <text x="560" y="126" class="sub">send KV at prefill_finished</text>
+  <text x="560" y="147" class="sub">request_id</text>
+  <text x="560" y="168" class="sub">request_id__cfg_text</text>
+  <text x="560" y="189" class="sub">request_id__cfg_img</text>
+  <text x="560" y="210" class="sub">metadata: ropes / image_shape</text>
+
+  <rect x="540" y="280" width="250" height="112" class="box cfg"></rect>
+  <text x="560" y="312" class="txt">cfg_kv_collect_func</text>
+  <text x="560" y="338" class="sub">collect_cfg_kv_caches()</text>
+  <text x="560" y="359" class="sub">cfg_text_past_key_values</text>
+  <text x="560" y="380" class="sub">cfg_img_past_key_values</text>
+
+  <rect x="845" y="35" width="300" height="170" class="box dit"></rect>
+  <text x="865" y="68" class="txt">Stage 1 · BagelPipeline</text>
+  <text x="865" y="94" class="sub">gen_context: primary KV</text>
+  <text x="865" y="115" class="sub">cfg_text_context: companion KV</text>
+  <text x="865" y="136" class="sub">cfg_img_context: companion/reused KV</text>
+  <text x="865" y="168" class="sub">prepare_vae_latent + CFG positions</text>
+
+  <rect x="845" y="255" width="300" height="125" class="box dit"></rect>
+  <text x="865" y="287" class="txt">BAGEL core</text>
+  <text x="865" y="313" class="sub">Qwen2MoTForCausalLM</text>
+  <text x="865" y="334" class="sub">SigLIP ViT + connector</text>
+  <text x="865" y="355" class="sub">generate_image(... cfg_text/img ...)</text>
+
+  <rect x="845" y="430" width="300" height="95" class="box vae"></rect>
+  <text x="865" y="463" class="txt">VAE decode</text>
+  <text x="865" y="489" class="sub">AutoEncoder.decode(latent)</text>
+  <text x="865" y="510" class="sub">PIL.Image → DiffusionOutput</text>
+
+  <path class="edge" d="M203 93 H245"></path>
+  <path class="edge" d="M365 173 V220"></path>
+  <path class="edge dash" d="M485 305 C515 260 515 165 540 148"></path>
+  <path class="edge" d="M790 147 H845"></path>
+  <path class="edge" d="M790 337 H845"></path>
+  <path class="edge" d="M995 205 V255"></path>
+  <path class="edge" d="M995 380 V430"></path>
+</svg>
+
+<h3>3.2 BAGEL 的 CFG request expansion</h3>
+
+<p>BAGEL 的 <code>expand_cfg_prompts</code> 会根据输出模态和是否 img2img 生成 companion request。核心规则：</p>
+
+<table>
+  <tr><th>场景</th><th>主请求</th><th>额外请求</th><th>DiT 侧使用</th></tr>
+  <tr>
+    <td>text2img，有 <code>negative_prompt</code></td>
+    <td><code>gen</code> 正向 prompt</td>
+    <td><code>cfg_text</code> negative prompt</td>
+    <td><code>cfg_img</code> 复用主请求 KV</td>
+  </tr>
+  <tr>
+    <td>img2img</td>
+    <td>图片 + edit prompt</td>
+    <td><code>cfg_text</code>、<code>cfg_img</code></td>
+    <td>三路 KV 分别作为 image/text CFG 条件</td>
+  </tr>
+  <tr>
+    <td>text2text / img2text</td>
+    <td>正常理解或文本输出</td>
+    <td>无</td>
+    <td>不走图像 CFG</td>
+  </tr>
+</table>
+
+<pre><code>def expand_cfg_prompts(prompt, sampling_params):
+    modalities = prompt.get("modalities", [])
+    if "image" not in modalities and "img2img" not in modalities:
+        return []
+
+    neg_prompt = _get_negative_prompt(prompt, sampling_params)
+
+    if "image" in modalities:
+        if not neg_prompt:
+            return []
+        return [ExpandedPrompt(
+            prompt={"prompt": neg_prompt, "modalities": prompt.get("modalities", [])},
+            role="cfg_text",
+            request_id_suffix="__cfg_text",
+        )]
+
+	    if "img2img" in modalities:
+	        return [
+	            ExpandedPrompt(... role="cfg_text", request_id_suffix="__cfg_text"),
+	            ExpandedPrompt(... role="cfg_img", request_id_suffix="__cfg_img"),
+	        ]</code></pre>
+
+<h3>3.3 BAGEL 模型内部组件图</h3>
+
+<p>BAGEL 的名字里 MoT 是重点：同一个 Qwen2MoT backbone 里，普通文本/ViT token 和生成用 VAE latent token 走不同的投影、norm、MLP 分支。vllm-omni 的两阶段部署只是把“前缀上下文构建”和“latent 去噪”拆开，模型内部仍然是这套 MoT 组件在工作。</p>
+
+<svg class="diagram" viewBox="0 0 1200 700" role="img" aria-label="BAGEL internal components">
+  <defs>
+    <marker id="arrowBI" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#374151"></path>
+    </marker>
+    <style>
+      .box{fill:#fff;stroke:#cbd5e1;stroke-width:1.4;rx:8}
+      .txt{font:13px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;fill:#1f2937}
+      .sub{font:11px Consolas,monospace;fill:#4b5563}
+      .txtb{fill:#dbeafe;stroke:#2563eb}.imgb{fill:#dcfce7;stroke:#168a5b}
+      .genb{fill:#fef3c7;stroke:#b45f06}.mot{fill:#f3e8ff;stroke:#7c3aed}
+      .edge{stroke:#374151;stroke-width:1.7;fill:none;marker-end:url(#arrowBI)}
+      .dash{stroke-dasharray:6 5}
+    </style>
+  </defs>
+
+  <text x="55" y="35" class="txt">BAGEL 上下文构建：文本、VAE 图像 token、ViT 图像 token 都写进 Qwen2MoT KV</text>
+  <rect x="45" y="62" width="230" height="118" class="box txtb"></rect>
+  <text x="65" y="94" class="txt">文本路径</text>
+  <text x="65" y="120" class="sub">AutoTokenizer</text>
+  <text x="65" y="141" class="sub">prepare_prompts()</text>
+  <text x="65" y="162" class="sub">bos + text + eos</text>
+
+  <rect x="45" y="220" width="230" height="138" class="box imgb"></rect>
+  <text x="65" y="252" class="txt">图像理解路径</text>
+  <text x="65" y="278" class="sub">SigLIP image_processor</text>
+  <text x="65" y="299" class="sub">SiglipNaViTWrapper</text>
+  <text x="65" y="320" class="sub">MLPconnector</text>
+  <text x="65" y="341" class="sub">vit_pos_embed</text>
+
+  <rect x="45" y="400" width="230" height="138" class="box genb"></rect>
+  <text x="65" y="432" class="txt">图像生成 / img2img 路径</text>
+  <text x="65" y="458" class="sub">AutoEncoder.encode</text>
+  <text x="65" y="479" class="sub">patch latent p×p×C</text>
+  <text x="65" y="500" class="sub">vae2llm + time_embedder</text>
+  <text x="65" y="521" class="sub">latent_pos_embed</text>
+
+  <rect x="340" y="98" width="255" height="172" class="box mot"></rect>
+  <text x="360" y="130" class="txt">Qwen2MoTForCausalLM</text>
+  <text x="360" y="156" class="sub">mode="und": text / ViT</text>
+  <text x="360" y="177" class="sub">mode="gen": VAE latent</text>
+  <text x="360" y="198" class="sub">qkv_proj vs qkv_proj_moe_gen</text>
+  <text x="360" y="219" class="sub">norm / norm_moe_gen</text>
+  <text x="360" y="240" class="sub">mlp / mlp_moe_gen</text>
+
+  <rect x="340" y="330" width="255" height="136" class="box mot"></rect>
+  <text x="360" y="362" class="txt">KV context</text>
+  <text x="360" y="388" class="sub">gen_context</text>
+  <text x="360" y="409" class="sub">cfg_text_context</text>
+  <text x="360" y="430" class="sub">cfg_img_context</text>
+  <text x="360" y="451" class="sub">ropes / kv_lens / NaiveCache</text>
+
+  <rect x="660" y="80" width="230" height="150" class="box genb"></rect>
+  <text x="680" y="112" class="txt">生成 latent 查询</text>
+  <text x="680" y="138" class="sub">prepare_vae_latent()</text>
+  <text x="680" y="159" class="sub">packed_init_noises</text>
+  <text x="680" y="180" class="sub">packed_vae_token_indexes</text>
+  <text x="680" y="201" class="sub">packed_vae_position_ids</text>
+
+  <rect x="660" y="282" width="230" height="170" class="box genb"></rect>
+  <text x="680" y="314" class="txt">generate_image loop</text>
+  <text x="680" y="340" class="sub">timesteps: 1 → 0</text>
+  <text x="680" y="361" class="sub">forward(x_t, timestep, KV)</text>
+  <text x="680" y="382" class="sub">v_t = velocity prediction</text>
+  <text x="680" y="403" class="sub">CFG combine main/text/img</text>
+  <text x="680" y="424" class="sub">x_t = x_t - v_t * dt</text>
+
+  <rect x="950" y="128" width="205" height="126" class="box mot"></rect>
+  <text x="970" y="160" class="txt">llm2vae</text>
+  <text x="970" y="186" class="sub">hidden → patch_latent_dim</text>
+  <text x="970" y="207" class="sub">reshape h,w,p,p,C</text>
+  <text x="970" y="228" class="sub">latent token update</text>
+
+  <rect x="950" y="330" width="205" height="104" class="box imgb"></rect>
+  <text x="970" y="362" class="txt">AutoEncoder.decode</text>
+  <text x="970" y="388" class="sub">latent → RGB image</text>
+  <text x="970" y="409" class="sub">PIL.Image output</text>
+
+  <path class="edge" d="M275 121 H340"></path>
+  <path class="edge" d="M275 288 C305 260 310 194 340 184"></path>
+  <path class="edge" d="M275 468 C313 456 313 420 340 404"></path>
+  <path class="edge" d="M468 270 V330"></path>
+  <path class="edge" d="M595 398 H660"></path>
+  <path class="edge" d="M775 230 V282"></path>
+  <path class="edge" d="M890 366 H950"></path>
+  <path class="edge" d="M775 452 C812 530 1010 525 1052 434"></path>
+  <path class="edge dash" d="M890 170 H950"></path>
+</svg>
+
+<table>
+  <tr><th>组件</th><th>具体作用</th><th>为什么对理解 BAGEL 重要</th></tr>
+  <tr>
+    <td><code>Qwen2MoTForCausalLM</code></td>
+    <td>主干语言模型，内部 decoder layer 有普通理解分支和 <code>*_moe_gen</code> 生成分支。</td>
+    <td>它不是单纯 LLM：VAE latent token 会走生成专用 QKV / norm / MLP，文本和 ViT token 走理解分支。</td>
+  </tr>
+  <tr>
+    <td><code>vae2llm</code> / <code>llm2vae</code></td>
+    <td><code>vae2llm</code> 把 VAE latent patch 投到 hidden size；<code>llm2vae</code> 把 hidden state 投回 latent patch 维度。</td>
+    <td>这是 LLM token 空间和图像 latent 空间之间的真正桥梁。</td>
+  </tr>
+  <tr>
+    <td><code>SiglipNaViTWrapper + MLPconnector</code></td>
+    <td>把输入图片变成理解用视觉 token，再投到 Qwen hidden size。</td>
+    <td>img2img 或图像理解时，它提供语义条件；VAE 分支提供像素/latent 条件。</td>
+  </tr>
+  <tr>
+    <td><code>generate_image</code></td>
+    <td>从 <code>packed_init_noises</code> 开始按 timestep 更新 latent，主分支、cfg_text、cfg_img 分支共同决定速度预测。</td>
+    <td>BAGEL 的 CFG 不是简单 negative prompt 字符串，而是三套 KV context 对同一批 latent query 的条件控制。</td>
+  </tr>
+</table>
+
+<h2 id="sec4">4. vllm-omni 只负责把模型组件接起来</h2>
+
+<p>框架部分可以压到很小：vllm-omni 不改变 Hunyuan 或 BAGEL 的内部计算图，只负责把“前端上下文构建”和“后端图像生成”拆成 stage，并在 stage 边界调用少量模型专用 hook。</p>
+
+<table>
+  <tr><th>框架接口</th><th>Hunyuan-Image3.0 用法</th><th>BAGEL 用法</th></tr>
+  <tr>
+    <td><code>PipelineConfig</code></td>
+    <td>声明 <code>AR → dit</code>，下游用 <code>ar2diffusion</code> 组装 DiT prompt。</td>
+    <td>声明 <code>thinker → dit</code>，下游主要读取 Thinker KV。</td>
+  </tr>
+  <tr>
+    <td><code>prompt_expand_func</code></td>
+    <td>不需要。AR 自己生成 recaption / ratio。</td>
+    <td>生成 <code>cfg_text</code> / <code>cfg_img</code> companion request。</td>
+  </tr>
+  <tr>
+    <td><code>custom_process_input_func</code></td>
+    <td><code>ar2diffusion</code>：截断 CoT、解析 ratio token、转交条件图。</td>
+    <td>默认不用，DiT 从 KV context 和原 prompt 取条件。</td>
+  </tr>
+  <tr>
+    <td><code>cfg_kv_collect_func</code></td>
+    <td>不需要三路 CFG companion KV。</td>
+    <td><code>collect_cfg_kv_caches</code>：把 companion KV 挂成 <code>cfg_text_past_key_values</code> / <code>cfg_img_past_key_values</code>。</td>
+  </tr>
+</table>
+
+<h3>4.1 最小拓扑：PipelineConfig 是模型结构，DeployConfig 是部署结构</h3>
+
+<p><code>StagePipelineConfig</code> 里只放模型结构：stage id、execution type、输入来源、是否最终输出、模型专用 hook。设备、并行、connector、默认 sampling 参数才放 deploy YAML。</p>
+
+<pre><code>@dataclass(frozen=True)
+class StagePipelineConfig:
+    stage_id: int
+    model_stage: str
+    execution_type: StageExecutionType = StageExecutionType.LLM_AR
+    input_sources: tuple[int, ...] = ()
+    final_output: bool = False
+    final_output_type: str | None = None
+    custom_process_input_func: str | None = None
+    prompt_expand_func: str | None = None
+    cfg_kv_collect_func: str | None = None
+    omni_kv_config: dict[str, Any] | None = None</code></pre>
+
+<h3>4.2 两个模型真正依赖的框架动作</h3>
+
+<p>对于 Hunyuan 这类“AR 输出需要改写成 diffusion prompt”的模型，关键路径在 <code>orchestrator.py</code>：</p>
+
+<pre><code>if next_pool.stage_type == "diffusion":
+    diffusion_source_outputs = [output, *companion_outputs]
+    if next_client.custom_process_input_func is not None:
+        diffusion_prompt = next_client.custom_process_input_func(
+            diffusion_source_outputs,
+            req_state.prompt,
+            requires_multimodal_data,
+            **_extra_kwargs,
+        )
+    else:
+        diffusion_prompt = req_state.prompt
+
+    await next_pool.submit_initial(
+        req_id,
+        req_state,
+        diffusion_prompt,
+        submit_kwargs={"kv_sender_info": ...},
+        params_override=self._maybe_clone_diffusion_params_for_cfg(req_id, params),
+    )</code></pre>
+
+<p>对于 BAGEL，<code>custom_process_input_func</code> 为空，但 <code>prompt_expand_func</code> 会在主请求入队后额外创建 companion request：</p>
+
+<pre><code>if self.prompt_expand_func is not None and final_stage_id &gt; 0:
+    original_prompt = msg.original_prompt
+    effective_spl = msg.sampling_params_list
+    stage0_params = effective_spl[0]
+    self._enqueue_cfg_companions(request_id, original_prompt, stage0_params, effective_spl)</code></pre>
+
+<h3>4.3 KV 只作为模型上下文的一种载体</h3>
+
+<p>Diffusion runner 每次执行前都会尝试收 KV，是否真的收由 <code>need_recv_cache</code> 决定。BAGEL 的 CFG companion KV 也是在这里被收集并挂到 <code>req.sampling_params</code> 上：</p>
+
+<pre><code>self.kv_transfer_manager.receive_multi_kv_cache_distributed(
+    req,
+    cfg_kv_collect_func=getattr(self.od_config, "cfg_kv_collect_func", None),
+    target_device=getattr(self.pipeline, "device", None),
+)</code></pre>
+
+<h2 id="sec5">5. 一次请求从 API 到图片的 debug walkthrough</h2>
+
+<h3>5.1 Hunyuan text-to-image</h3>
+
+<div class="grid2">
+  <div class="card">
+    <h4>请求形态</h4>
+    <pre><code>POST /v1/images/generations
+{
+  "model": "tencent/HunyuanImage-3.0-Instruct",
+  "prompt": "A glass teapot on a bamboo table",
+  "width": 1024,
+  "height": 1024,
+  "n": 1,
+  "num_inference_steps": 50,
+  "guidance_scale": 0
+}</code></pre>
+  </div>
+  <div class="card">
+    <h4>阶段变量</h4>
+    <table>
+      <tr><th>节点</th><th>核心变量</th></tr>
+      <tr><td>stage 0 AR</td><td><code>output.text</code>，<code>output.cumulative_token_ids</code></td></tr>
+      <tr><td><code>ar2diffusion</code></td><td><code>ratio_idx</code>，<code>cot_text_for_dit</code>，<code>diffusion_input</code></td></tr>
+      <tr><td>stage 1 DiT</td><td><code>cot_text</code>，<code>image_size</code>，<code>ar_kv_data</code></td></tr>
+      <tr><td>输出</td><td><code>DiffusionOutput(output=outputs[0])</code></td></tr>
+    </table>
+  </div>
+</div>
+
+<ol>
+  <li><code>AsyncOmniEngine</code> 根据 pipeline 生成两个 stage 的 <code>sampling_params_list</code>，并把请求提交给 stage 0。</li>
+  <li>stage 0 AR 生成文本和特殊 token。对 Hunyuan 来说，尾部的 <code>&lt;img_ratio_*&gt;</code> 是目标比例的机器可读信号。</li>
+  <li><code>Orchestrator</code> 发现下游是 diffusion stage，调用 <code>hunyuan_image3.ar2diffusion(source_outputs, original_prompt, ...)</code>。</li>
+  <li><code>ar2diffusion</code> 从 token id 反查 ratio index，用 <code>_build_ratio_size_table(base_size)</code> 得到 <code>(height,width)</code>，再截断 <code>&lt;/recaption&gt;</code> 后面的尾部 token。</li>
+  <li><code>HunyuanImage3Pipeline.forward</code> 读取 <code>extra.ar_generated_text</code>，归一化成 <code>cot_text</code>，调用 <code>prepare_model_inputs(... mode="gen_image")</code>。</li>
+  <li><code>prepare_model_inputs</code> 构建 chat template、2D RoPE、条件图像编码、CFG batch，然后 <code>_generate</code> 执行 FlowMatch denoising，最后 VAE decode。</li>
+</ol>
+
+<h3>5.2 BAGEL text-to-image with negative prompt</h3>
+
+<div class="grid2">
+  <div class="card">
+    <h4>请求形态</h4>
+    <pre><code>POST /v1/chat/completions
+{
+  "model": "ByteDance-Seed/BAGEL-7B-MoT",
+  "messages": [{"role": "user", "content": "a clean product photo"}],
+  "modalities": ["image"],
+  "extra_body": {
+    "negative_prompt": "blurry, low quality",
+    "num_inference_steps": 50,
+    "cfg_text_scale": 4.0,
+    "cfg_img_scale": 1.5
+  }
+}</code></pre>
+  </div>
+  <div class="card">
+    <h4>阶段变量</h4>
+    <table>
+      <tr><th>节点</th><th>核心变量</th></tr>
+      <tr><td><code>prompt_expand_func</code></td><td><code>ExpandedPrompt(role="cfg_text")</code></td></tr>
+      <tr><td>stage 0 Thinker</td><td><code>request_id</code> 与 <code>request_id__cfg_text</code> 的 KV</td></tr>
+      <tr><td>KV collect</td><td><code>cfg_text_past_key_values</code>，<code>cfg_text_kv_metadata</code></td></tr>
+      <tr><td>stage 1 DiT</td><td><code>gen_context</code>，<code>cfg_text_context</code>，<code>cfg_img_context</code></td></tr>
+    </table>
+  </div>
+</div>
+
+<ol>
+  <li>主请求入队后，<code>AsyncOmniEngine._enqueue_cfg_companions</code> 调用 <code>expand_cfg_prompts</code>，创建 <code>request_id__cfg_text</code>。</li>
+  <li>主请求和 companion 请求都经过 stage 0 prefill。由于 <code>kv_transfer_criteria={"type":"prefill_finished"}</code>，prefill 完成即可发送 KV。</li>
+  <li>stage 1 的 <code>DiffusionModelRunner.execute_model</code> 先调用 <code>receive_multi_kv_cache_distributed</code>，主 KV 被挂到 <code>sampling_params.past_key_values</code>。</li>
+  <li><code>collect_cfg_kv_caches</code> 再按 role 拉取 companion KV，并设置 <code>cfg_text_past_key_values</code> 等字段。</li>
+  <li><code>BagelPipeline.forward</code> 将主 KV 填入 <code>gen_context</code>，将 companion KV 填入 <code>cfg_text_context</code>；text2img 下 <code>cfg_img_context</code> 默认复用主 KV。</li>
+  <li><code>bagel.generate_image</code> 同时使用三路 context 做 CFG，得到 latent，再由 <code>AutoEncoder.decode</code> 转成 <code>PIL.Image</code>。</li>
+</ol>
+
+<h2 id="sec6">6. 关键源码入口与新增模型 checklist</h2>
+
+<h3>6.1 文件地图</h3>
+
+<table>
+  <tr><th>层</th><th>Hunyuan-Image3.0</th><th>BAGEL</th><th>公共框架</th></tr>
+  <tr>
+    <td>pipeline 定义</td>
+    <td><code>model_executor/models/hunyuan_image3/pipeline.py</code></td>
+    <td><code>model_executor/models/bagel/pipeline.py</code></td>
+    <td><code>config/pipeline_registry.py</code>，<code>config/stage_config.py</code></td>
+  </tr>
+  <tr>
+    <td>stage bridge</td>
+    <td><code>stage_input_processors/hunyuan_image3.py</code></td>
+    <td><code>stage_input_processors/bagel.py</code></td>
+    <td><code>engine/orchestrator.py</code></td>
+  </tr>
+  <tr>
+    <td>AR / Thinker 模型</td>
+    <td><code>model_executor/models/hunyuan_image3/hunyuan_image3.py</code></td>
+    <td><code>model_executor/models/bagel/bagel.py</code></td>
+    <td><code>core/sched/omni_ar_scheduler.py</code></td>
+  </tr>
+  <tr>
+    <td>Diffusion pipeline</td>
+    <td><code>diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py</code></td>
+    <td><code>diffusion/models/bagel/pipeline_bagel.py</code></td>
+    <td><code>diffusion/worker/diffusion_model_runner.py</code></td>
+  </tr>
+  <tr>
+    <td>跨 stage KV</td>
+    <td><code>need_send_cache</code> / <code>need_recv_cache</code></td>
+    <td><code>cfg_kv_collect_func</code> + companion ids</td>
+    <td><code>distributed/omni_connectors/kv_transfer_manager.py</code></td>
+  </tr>
+</table>
+
+<h3>6.2 新增类似模型时的最小接口</h3>
+
+<div class="grid3">
+  <div class="card">
+    <h4>1. 先声明拓扑</h4>
+    <p>在 <code>model_executor/models/&lt;model&gt;/pipeline.py</code> 定义 <code>PipelineConfig</code>。如果是 AR→DiT，就让 stage 1 的 <code>input_sources=(0,)</code>，并声明需要的 hook。</p>
+  </div>
+  <div class="card">
+    <h4>2. 再声明 bridge</h4>
+    <p>如果下游 prompt 需要从上游输出构造，写 <code>custom_process_input_func</code>。如果需要 CFG companion，就写 <code>prompt_expand_func</code> 和 <code>cfg_kv_collect_func</code>。</p>
+  </div>
+  <div class="card">
+    <h4>3. 最后补 deploy</h4>
+    <p>在 deploy YAML 中配置每个 stage 的 <code>devices</code>、并行参数、默认 sampling 参数和 connector。结构不要塞进 deploy，结构应该在 pipeline 里。</p>
+  </div>
+</div>
+
+<div class="warn">一个常见误区：<code>custom_process_input_func</code> 和 KV connector 不是二选一。Hunyuan 同时用显式 prompt bridge 和 KV reuse；BAGEL 主要靠 KV bridge，但也用 <code>prompt_expand_func</code> 在请求层制造 CFG 分支。</div>
+
+<h2 id="sec7">7. 总结</h2>
+
+<ul>
+  <li>Hunyuan-Image3.0 的主线是 <b>AR 文本/ratio/cot → ar2diffusion → DiT/VAE</b>。它的 bridge 要同时处理文本截断、比例 token、系统 prompt、原始条件图和可选 AR KV。</li>
+  <li>BAGEL 的主线是 <b>Thinker prefill KV → CFG companion KV → BagelPipeline 三路 CFG</b>。它的关键不是改写 prompt，而是保证主请求和 companion 请求的 KV 被准确收集。</li>
+  <li>vllm-omni 的公共框架把模型差异压缩到四个 hook：<code>prompt_expand_func</code>、<code>custom_process_input_func</code>、<code>custom_process_next_stage_input_func</code>、<code>cfg_kv_collect_func</code>。</li>
+  <li><code>PipelineConfig</code> 定义“模型是什么结构”，deploy YAML 定义“这个结构怎么部署”。这条边界清楚后，Hunyuan、BAGEL、Qwen-Omni、GLM-Image 等模型可以复用同一套 stage 编排和 connector。</li>
+</ul>
+
+<p class="footer-note">源码索引：<code>vllm_omni/model_executor/models/hunyuan_image3/pipeline.py</code> · <code>vllm_omni/model_executor/stage_input_processors/hunyuan_image3.py</code> · <code>vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py</code> · <code>vllm_omni/model_executor/models/bagel/pipeline.py</code> · <code>vllm_omni/model_executor/stage_input_processors/bagel.py</code> · <code>vllm_omni/diffusion/models/bagel/pipeline_bagel.py</code> · <code>vllm_omni/config/stage_config.py</code> · <code>vllm_omni/engine/async_omni_engine.py</code> · <code>vllm_omni/engine/orchestrator.py</code> · <code>vllm_omni/distributed/omni_connectors/kv_transfer_manager.py</code></p>
+
+<script src="./nav.js"></script>
+</body>
+</html>

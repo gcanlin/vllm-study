@@ -22,6 +22,11 @@
       label: "CP / PCP / DCP",
     },
     {
+      href: "./vllm_omni_hunyuan_bagel_arch.html",
+      file: "vllm_omni_hunyuan_bagel_arch.html",
+      label: "Omni Hunyuan/BAGEL",
+    },
+    {
       href: "./vllm_prefix_cache.html",
       file: "vllm_prefix_cache.html",
       label: "Prefix Cache",

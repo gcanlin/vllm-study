@@ -12,6 +12,7 @@ Current page:
 - Qwen3 model structure notes: `site/qwen3_structure.html`
 - Qwen3-Omni streaming audio/text/video input walkthrough: `site/qwen3_omni_streaming_inputs.html`
 - vLLM Context Parallel notes: `site/vllm_cp_pcp_dcp.html`
+- vLLM-Omni Hunyuan-Image3.0 and BAGEL architecture notes: `site/vllm_omni_hunyuan_bagel_arch.html`
 - vLLM Prefix Cache notes: `site/vllm_prefix_cache.html`
 - vLLM-Omni streaming input/output and async_chunk notes: `site/vllm_omni_streaming.html`
 - vLLM Sampler notes: `site/vllm_sampler.html`
