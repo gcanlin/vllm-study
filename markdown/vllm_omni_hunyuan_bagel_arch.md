@@ -17,7 +17,7 @@
 | 部分 | 内容 | 重点 |
 |------|------|------|
 | 第一部分 | 两个模型的共同范式 | 为什么都是 “AR/Thinker + DiT/VAE” |
-| 第二部分 | Hunyuan-Image3.0 架构 | AR 侧图像编码、ratio token、DiT 侧条件图与 latent 去噪 |
+| 第二部分 | Hunyuan-Image3.0 架构 | special token 速查、任务路径（CoT / 非 CoT / T2I / T+I2I）、AR 侧图像编码、ratio token、DiT 侧条件图与 latent 去噪 |
 | 第三部分 | BAGEL 架构 | Qwen2MoT、VAE token、ViT token、三路 CFG KV |
 | 第四部分 | vLLM-Omni 承载层 | 只说明 PipelineConfig / bridge hook 怎样承载模型 |
 | 第五部分 | 对比总结 | 新接类似模型时要关注哪些模型内部边界 |
@@ -90,7 +90,204 @@ HUNYUAN_IMAGE3_PIPELINE = PipelineConfig(
 
 这里不要把 stage 0 理解成“只会产文本”。它内部也有 VAE、SigLIP2、投影层和 mRoPE，用于把输入图像编码进 AR 上下文。
 
-## 2.2 Hunyuan 内部组件总览
+## 2.2 任务模式与特殊 token 速查
+
+要理解 Hunyuan 各种 task 怎么走不同路径，必须先把它的特殊 token 词表和 `bot_task` 参数对清楚。Hunyuan 的所有"任务差异"几乎都体现在 **AR 阶段生成或填入哪些 special token** 上，DiT 阶段本身不会去判断任务类型。
+
+### 2.2.1 bot_task 模式
+
+源码入口：`HunyuanImage3ForCausalMM.generate_image()` 与 `tokenization_hunyuan_image_3.py::apply_general_template()`。
+
+| `bot_task` 取值 | 含义 | AR 阶段产出 |
+|----------------|------|--------------|
+| `image` | 直接进 DiT，不经过任何 AR token 采样 | （无 AR sampling） |
+| `auto` | 跳过 CoT，但自动判定图像尺寸 | 1 个 `<img_ratio_*>` |
+| `img_ratio` | 等价于"仅判定尺寸" | 1 个 `<img_ratio_*>` |
+| `think` | 只做 think CoT | `<think>...</think>` + 可选 `<img_ratio_*>` |
+| `recaption` | 只做 prompt recaption | `<recaption>...</recaption>` + 可选 `<img_ratio_*>` |
+| `think_recaption` | 先 think，再 recaption | `<think>...</think>` `<recaption>...</recaption>` + 可选 `<img_ratio_*>` |
+
+是否追加 ratio token 由 `image_size == "auto"` 决定：传 `(H,W)` 的固定值就完全跳过 ratio 采样。
+
+### 2.2.2 特殊 token 分类速查
+
+下表覆盖 `setup_special_tokens()` 里所有注册的 token，按用途归类。
+
+**(a) 结构控制 token（assistant 输出阶段）**
+
+| Token | 作用 | 出现位置 |
+|-------|------|----------|
+| `<think>` / `</think>` | 思考链 think 段包裹 | `bot_task` 含 think 时 AR 生成 |
+| `<recaption>` / `</recaption>` | prompt recaption 段包裹 | `bot_task` 含 recaption 时 AR 生成 |
+| `<answer>` / `</answer>` | instruct 模板下 assistant 真实回答的包裹 | chat template 自动插入 |
+| `<boi>` / `<eoi>` | begin/end of image，标记一段图像 token | 条件图前后 + 生成图前后 |
+| `<boa>` / `<eoa>` | begin/end of answer（部分场景与 `<answer>` 等价） | 模板可选 |
+| `<bov>` / `<eov>` | begin/end of vision（VAE 路径变体） | 模板可选 |
+
+**(b) 图像 placeholder 与 embedding 占位 token**
+
+| Token | 作用 | 谁来填 |
+|-------|------|--------|
+| `<img>` | 输入图像在 prompt 里的占位符 | 预处理时被替换成 `VAE tokens + <joint_img_sep> + ViT tokens` 序列 |
+| `<joint_img_sep>` | 同一张图内 VAE token 与 ViT token 之间的分隔符 | chat template |
+| `<timestep>` | 占位 token，其 embedding 由 `TimestepEmbedder(t)` 动态写入 | 模型 forward 时填充（条件图传 t=0，生成图传当前 timestep） |
+| `<timestep_r>` | meanflow 用的额外 timestep | 默认未启用 |
+| `<guidance>` | CFG distilled 模型的 guidance scale embedding 占位 | 默认未启用 |
+| `<cfg>` | classifier-free guidance 占位符（uncond 分支用） | CFG 构造负样本时使用 |
+
+**(c) 尺寸 / 比例控制 token**
+
+| Token | 作用 | 谁来写 |
+|-------|------|--------|
+| `<img_size_{N}>` | 图像 base size，例如 `<img_size_1024>` | chat template 在生成图 `<boi>` 后直接写入 |
+| `<img_ratio_{0..36}>` | 宽高比索引，对应 `vae_reso_group` 中预定义的 `(H, W)` 表 | AR 在 `<img_size_*>` 之后强制采样产出（greedy） |
+
+ratio token 是 AR 与 DiT 的关键桥：
+
+- 0–32：标准比例（HunyuanImage-3.0）
+- 33–36：扩展比例（仅在某些版本启用）
+
+bridge 拿到 ratio token id 后用 `_build_ratio_size_table(base_size)` 反查出 `(height, width)`，交给 DiT 决定生成图 latent 网格。
+
+**(d) 接地 / 空间语义 token（grounding，默认推理路径不使用）**
+
+| Token | 作用 |
+|-------|------|
+| `<ref>` / `</ref>` | 引用目标 |
+| `<quad>` / `</quad>` | 四边形框 |
+| `<relation_*>` `<x_*>` `<y_*>` `<z_*>` | 空间关系与坐标位置 |
+
+### 2.2.3 单请求 token 序列模板
+
+下面用伪格式展示 instruct 模板下不同任务的 AR 完整输入/输出序列。`[ ... ]` 标注 DiT 阶段才会被实际填充的部分，`{ ... }` 标注 AR 阶段会采样产出的部分。
+
+**T2I（text-to-image），`bot_task=image`，固定 image_size**：
+
+```text
+<system>system prompt</system><sep>
+<user>用户 prompt</user><sep>
+<assistant><answer><boi><img_size_1024><img_ratio_X>           # 全部由 chat template 直接写入
+<timestep>[VAE gen tokens]<joint_img_sep>[ViT gen tokens]<eoi></answer>
+```
+
+**T2I，`bot_task=auto`（最常用，自动判定尺寸，无 CoT）**：
+
+```text
+<system>system prompt</system><sep>
+<user>用户 prompt</user><sep>
+<assistant><answer><boi><img_size_1024>{<img_ratio_X>}        # AR 仅生成 1 个 ratio token
+<timestep>[VAE gen tokens]<joint_img_sep>[ViT gen tokens]<eoi></answer>
+```
+
+**T2I + think CoT，`bot_task=think`**：
+
+```text
+<system>system prompt</system><sep>
+<user>用户 prompt</user><sep>
+<assistant>{<think>...思考过程...</think>}                     # AR 自由采样 think 段
+<answer><boi><img_size_1024>{<img_ratio_X>}                    # </think> 后强制 transition + ratio
+<timestep>[VAE gen tokens]<joint_img_sep>[ViT gen tokens]<eoi></answer>
+```
+
+**T2I + recaption CoT，`bot_task=recaption`**：
+
+```text
+<system>system prompt</system><sep>
+<user>用户 prompt</user><sep>
+<assistant>{<recaption>...改写后的 prompt...</recaption>}       # AR 自由采样 recaption 段
+<answer><boi><img_size_1024>{<img_ratio_X>}
+<timestep>[VAE gen tokens]<joint_img_sep>[ViT gen tokens]<eoi></answer>
+```
+
+**T2I + think_recaption**：think 与 recaption 串联，两段中间由 `_StageTransitionLogitsProcessor` 强制把 `</think>` 切到 `<recaption>`。
+
+**T+I2I（image editing，带条件图）**：在 user 段插入一段图像 token 即可，AR/CoT 分支与 T2I 完全相同：
+
+```text
+<system>system prompt</system><sep>
+<user>
+  <boi><timestep>[cond VAE tokens]<joint_img_sep>[cond ViT tokens]<eoi>   # 预处理时把 <img> 替换进来
+  编辑指令
+</user><sep>
+<assistant>[optional CoT segments]
+<answer><boi><img_size_1024>{<img_ratio_X>}
+<timestep>[VAE gen tokens]<joint_img_sep>[ViT gen tokens]<eoi></answer>
+```
+
+### 2.2.4 AR 采样的强制规则
+
+AR 的自定义 `sample()` 用上面这些 token 做了三类强制约束（也是为什么模型一定能产出合法 ratio 的关键）：
+
+1. **stage transition forcing**：通过 `_StageTransitionLogitsProcessor` 把 `</think>` 后强制跳到 `<recaption>` 起始；把 `</recaption>` / `</think>` 后强制跳到 `<answer><boi><img_size_*>`。
+2. **ratio restriction**：上一个 token 是 `<img_size_*>` 时，只允许从 `<img_ratio_0..32>`（+ 扩展槽位 33..36）里 argmax 选择。
+3. **terminate on ratio**：一旦产出 ratio token，下一步只能输出 `<eos>`，AR 阶段结束。
+
+这就是为什么 AR 输出对 DiT 而言是"结构化控制信号"而不是普通自然语言生成。
+
+---
+
+## 2.3 任务条件下的执行路径
+
+下面这张图把 `bot_task` × `image_size` × 是否带条件图的所有组合拍成一张分支图。注意：**所有路径最终都会进入同一个 DiT denoise loop**，差异只在于 AR 阶段产出什么、DiT 输入 prompt 拼成什么样子。
+
+```mermaid
+flowchart TB
+    In["请求<br/>prompt + (可选) 输入图"] --> Probe{"输入图存在？"}
+    Probe -->|是| CondImg["走 <img> 预处理:<br/>VAE encode + SigLIP2 encode<br/>填入 user 段的 <boi>...<eoi>"]
+    Probe -->|否| Skip0["user 段无条件图 token"]
+
+    CondImg --> Mode
+    Skip0 --> Mode
+
+    Mode{"bot_task / image_size"}
+
+    Mode -->|"bot_task=image<br/>image_size 显式"| PathA["AR 阶段:<br/>完全跳过 token sampling<br/>(只构造模板)"]
+    Mode -->|"bot_task=auto<br/>or image_size='auto'"| PathB["AR 仅生成 1 个<br/>&lt;img_ratio_*&gt;"]
+    Mode -->|"bot_task=think"| PathC["AR 生成<br/>{&lt;think&gt;...&lt;/think&gt;}<br/>+ 可选 ratio"]
+    Mode -->|"bot_task=recaption"| PathD["AR 生成<br/>{&lt;recaption&gt;...&lt;/recaption&gt;}<br/>+ 可选 ratio"]
+    Mode -->|"bot_task=think_recaption"| PathE["AR 生成 think 段 →<br/>strong transition →<br/>recaption 段 → ratio"]
+
+    PathA --> Bridge
+    PathB --> Bridge
+    PathC --> Bridge
+    PathD --> Bridge
+    PathE --> Bridge
+
+    Bridge["ar2diffusion bridge:<br/>1) 截断 &lt;/recaption&gt;/&lt;/think&gt; 之后尾部<br/>2) 解析 &lt;img_ratio_*&gt; → (H, W)<br/>3) 转交原 multi_modal_data 给 DiT"]
+
+    Bridge --> DiTPrompt["DiT 拼装 prompt:<br/>system + cot_text + boi + size + ratio + ...<br/>+ 可选条件图 VAE/ViT tokens"]
+
+    DiTPrompt --> Denoise["FlowMatch Euler 去噪循环<br/>(transformer forward + ragged_final_layer)"]
+    Denoise --> VAEDec["DistributedAutoencoderKLHunyuan.decode"]
+    VAEDec --> Out["输出图像"]
+
+    classDef arNode fill:#fef3c7,stroke:#f59e0b,color:#000
+    classDef ditNode fill:#dbeafe,stroke:#3b82f6,color:#000
+    classDef bridgeNode fill:#dcfce7,stroke:#16a34a,color:#000
+    class PathA,PathB,PathC,PathD,PathE arNode
+    class DiTPrompt,Denoise,VAEDec ditNode
+    class Bridge bridgeNode
+```
+
+四类常见任务在这张图上的具体走法：
+
+| 任务 | 输入图？ | bot_task | image_size | AR 实际工作 | DiT 输入差别 |
+|------|----------|----------|------------|-------------|---------------|
+| **T2I 极速档** | 否 | `image` | 固定 `(H,W)` | 仅构造模板，不采样 | 无条件图，无 cot |
+| **T2I 默认档** | 否 | `auto` | `"auto"` | 1 个 ratio token | 无条件图，无 cot |
+| **T2I + CoT** | 否 | `think` / `recaption` / `think_recaption` | `"auto"` 或固定 | CoT 段 + 可选 ratio | 无条件图，cot 段拼进 prompt |
+| **T+I2I（编辑）** | 是 | 上述任一 | 上述任一 | 同上 | 有条件图 VAE+ViT token，cot 段同 T2I |
+
+关键观察：
+
+- **AR 是否被"实质性"使用，只看 `bot_task` 与 `image_size` 的组合**，与是否有条件图无关。
+- **是否带条件图只影响 prompt 模板里 user 段的内容**，不影响 AR/DiT 的执行结构。
+- **CoT 的 token 串（think/recaption 段）会被 bridge 截断保留并拼到 DiT 的 prompt 文本里**，作为 DiT 的高质量描述输入，而 `<img_size_*>` / `<img_ratio_*>` 这类控制 token 不会泄漏进 DiT prompt（bridge 显式 truncate）。
+- **`<img_ratio_*>` 是 AR 与 DiT 的唯一"数值型"接口**：ratio 索引被解析成 (H, W) 决定生成图 latent 网格。
+
+---
+
+## 2.4 Hunyuan 内部组件总览
 
 ```mermaid
 flowchart TB
@@ -140,7 +337,7 @@ flowchart TB
     Bridge --> D1
 ```
 
-## 2.3 AR stage: 图像输入如何变成 LLM token
+## 2.5 AR stage: 图像输入如何变成 LLM token
 
 源码入口：
 
@@ -148,7 +345,7 @@ flowchart TB
 vllm_omni/model_executor/models/hunyuan_image3/hunyuan_image3.py
 ```
 
-### 2.3.1 HunyuanImage3Processor
+### 2.5.1 HunyuanImage3Processor
 
 `HunyuanImage3Processor` 负责把输入图像拆成两套表示：
 
@@ -172,7 +369,7 @@ flowchart LR
     VIT --> ST["semantic vision tokens"]
 ```
 
-### 2.3.2 VAE path
+### 2.5.2 VAE path
 
 AR stage 的模型类里显式创建了这些组件：
 
@@ -197,7 +394,7 @@ VAE path 的实际过程：
 
 VAE path 提供更接近像素/空间结构的图像条件。
 
-### 2.3.3 ViT path
+### 2.5.3 ViT path
 
 ViT path 的组件：
 
@@ -220,7 +417,7 @@ self.vision_aligner = LightProjector(config.vit_aligner)
 
 `<timestep>` 的 embedding 不是普通词表 embedding，而是由 `TimestepEmbedder(0)` 动态替换。
 
-### 2.3.4 mRoPE 与 image token 位置
+### 2.5.4 mRoPE 与 image token 位置
 
 Hunyuan 自定义了 `get_mrope_input_positions()`，把不同 token 映射到 3 维 mRoPE 位置：
 
@@ -233,7 +430,9 @@ Hunyuan 自定义了 `get_mrope_input_positions()`，把不同 token 映射到 3
 
 这解释了为什么 `vae_token_grid_hw` 和 `vit_spatial_shapes` 都要从 processor 一直带到 model。
 
-## 2.4 AR 输出: 强制阶段 token 与 ratio token
+## 2.6 AR 输出采样的强制约束（实现细节）
+
+> 概念性总结见 [2.2.4 节](#224-ar-采样的强制规则)。这里给出对应的源码层面实现。
 
 Hunyuan AR 的采样器不是普通 sampling。`sample()` 里有两类模型专用逻辑：
 
@@ -256,7 +455,7 @@ elif last_token in self._all_ratio_ids:
 
 这就是 Hunyuan 的特殊性：AR stage 不只生成自然语言，还生成给 DiT 使用的结构化控制 token。
 
-## 2.5 ar2diffusion: AR 到 DiT 的模型语义桥
+## 2.7 ar2diffusion: AR 到 DiT 的模型语义桥
 
 源码：
 
@@ -292,7 +491,7 @@ diffusion_input = {
 | 截断 `</recaption>` / `</think>` 后面的尾部 | 防止 `<answer><boi><img_size><img_ratio>` 泄漏进 DiT prompt |
 | 转交原始 `multi_modal_data["image"]` | image editing / multi-image conditioning 需要原图 |
 
-## 2.6 DiT stage: HunyuanImage3Pipeline
+## 2.8 DiT stage: HunyuanImage3Pipeline
 
 源码：
 
@@ -300,7 +499,7 @@ diffusion_input = {
 vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py
 ```
 
-### 2.6.1 初始化组件
+### 2.8.1 初始化组件
 
 `HunyuanImage3Pipeline.__init__()` 中的核心组件：
 
@@ -315,7 +514,7 @@ vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py
 | `UNetUp final_layer` | transformer hidden → latent patch prediction |
 | `FlowMatchEulerDiscreteScheduler` | diffusion timestep 更新 |
 
-### 2.6.2 forward 数据流
+### 2.8.2 forward 数据流
 
 `forward()` 做的事：
 
@@ -350,7 +549,7 @@ outputs = self._generate(**model_inputs, **kwargs)
 4. 构建 2D RoPE。
 5. 返回给 `_generate()` / diffusion loop 的模型输入。
 
-### 2.6.3 forward_call: latent token 如何参与 transformer
+### 2.8.3 forward_call: latent token 如何参与 transformer
 
 `forward_call()` 里有两类图像 token：
 
