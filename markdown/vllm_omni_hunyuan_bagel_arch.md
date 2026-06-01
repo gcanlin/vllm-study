@@ -17,7 +17,7 @@
 | 部分 | 内容 | 重点 |
 |------|------|------|
 | 第一部分 | 两个模型的共同范式 | 为什么都是 “AR/Thinker + DiT/VAE” |
-| 第二部分 | Hunyuan-Image3.0 架构 | special token 速查、任务路径（CoT / 非 CoT / T2I / T+I2I）、AR 侧图像编码、ratio token、DiT 侧条件图与 latent 去噪 |
+| 第二部分 | Hunyuan-Image3.0 架构 | special token 速查、任务路径（CoT / 非 CoT / T2I / T+I2I）、AR 侧图像编码、ratio token、DiT 侧条件图与 latent 去噪、DiT attention 从 SDPA 到 piecewise FA 优化案例 |
 | 第三部分 | BAGEL 架构 | Qwen2MoT、VAE token、ViT token、三路 CFG KV |
 | 第四部分 | vLLM-Omni 承载层 | 只说明 PipelineConfig / bridge hook 怎样承载模型 |
 | 第五部分 | 对比总结 | 新接类似模型时要关注哪些模型内部边界 |
@@ -111,36 +111,59 @@ HUNYUAN_IMAGE3_PIPELINE = PipelineConfig(
 
 ### 2.2.2 特殊 token 分类速查
 
+#### 前置：chat template 与特殊 token 的工作机制
+
+理解下表前需要先拆开两个常见误解：
+
+1. **chat template 就是 Jinja 字符串拼接**。它从 `tokenizer_config.json::chat_template` 加载，唯一的工作是把 `messages = [{"role":..., "content":...}, ...]` 按角色前后缀拼成一个纯文本字符串，再交给普通 tokenizer encode 成 `input_ids`。**它不调模型、也不带任何"特殊语义"**。
+2. **特殊 token 在模型层面就是普通词表条目**。"特殊"只体现在 tokenizer 端：注册过的 `<boi>` 不会被 BPE 切碎，单串直接映射成一个整数 id；decode 时可被 `skip_special_tokens` 跳过。一旦进入模型 forward，它和别的 token id 走完全相同的 embedding lookup → transformer → logits 流程，模型层面不知道它"特殊"。
+
+由此一个 token 出现在最终序列里只有四种来源，下面的表用统一的"产出方式"列标注：
+
+| 产出方式 | 含义 | 发生时机 |
+|----------|------|----------|
+| **template** | chat template 字符串拼接时直接写进 prompt | `generate()` 之前 |
+| **AR sample** | 模型 forward → logits → 采样 → 追加到序列尾部 | `generate()` 每一步 |
+| **AR sample (restricted)** | 同上，但 logits processor 把 vocab 限制到一小段；仍走采样链路 | `generate()` 中按触发条件改写 logits |
+| **embedding 替换** | token id 由 template 占位写入，但 forward 时这个位置的 word embedding 被其他模块算出来的连续向量覆盖 | forward 内部 |
+
+特别提醒：所谓"强制 token"（例如 `</think>` 后必须跳到 `<recaption>`）的本质是 logits processor 把其他 token 的 logit 压成 `-inf`，**仍然属于 AR sample，只是采样结果确定**。模型 forward 那一步并没有被跳过——它的输出 KV 还要进 cache 给下一步用。
+
+#### 分类速查
+
 下表覆盖 `setup_special_tokens()` 里所有注册的 token，按用途归类。
 
 **(a) 结构控制 token（assistant 输出阶段）**
 
-| Token | 作用 | 出现位置 |
+| Token | 作用 | 产出方式 |
 |-------|------|----------|
-| `<think>` / `</think>` | 思考链 think 段包裹 | `bot_task` 含 think 时 AR 生成 |
-| `<recaption>` / `</recaption>` | prompt recaption 段包裹 | `bot_task` 含 recaption 时 AR 生成 |
-| `<answer>` / `</answer>` | instruct 模板下 assistant 真实回答的包裹 | chat template 自动插入 |
-| `<boi>` / `<eoi>` | begin/end of image，标记一段图像 token | 条件图前后 + 生成图前后 |
-| `<boa>` / `<eoa>` | begin/end of answer（部分场景与 `<answer>` 等价） | 模板可选 |
-| `<bov>` / `<eov>` | begin/end of vision（VAE 路径变体） | 模板可选 |
+| `<think>` | think 段起始标签 | template（`bot_task=think*` 时由 `add_assistant_prefix` 拼上） |
+| `</think>` | think 段结束 | **AR sample**（模型训练时学会自己出） |
+| `<recaption>` | recaption 段起始标签 | template（`bot_task=recaption` 时拼上），或 **AR sample (restricted)**（think_recaption 时由 transition processor 强制） |
+| `</recaption>` | recaption 段结束 | **AR sample** |
+| `<answer>` / `</answer>` | instruct 模板下 assistant 回答的包裹 | template |
+| `<boi>` / `<eoi>` | begin/end of image，标记图像 token 段 | template（条件图与生成图前后由模板写入） |
+| `<boa>` / `<eoa>` | begin/end of answer（部分场景等价 `<answer>`） | template（模板可选） |
+| `<bov>` / `<eov>` | begin/end of vision（VAE 路径变体） | template（模板可选） |
+| `<eos>` | 序列结束 | **AR sample**（ratio token 之后由 restriction 强制采样它） |
 
 **(b) 图像 placeholder 与 embedding 占位 token**
 
-| Token | 作用 | 谁来填 |
-|-------|------|--------|
-| `<img>` | 输入图像在 prompt 里的占位符 | 预处理时被替换成 `VAE tokens + <joint_img_sep> + ViT tokens` 序列 |
-| `<joint_img_sep>` | 同一张图内 VAE token 与 ViT token 之间的分隔符 | chat template |
-| `<timestep>` | 占位 token，其 embedding 由 `TimestepEmbedder(t)` 动态写入 | 模型 forward 时填充（条件图传 t=0，生成图传当前 timestep） |
+| Token | 作用 | 产出方式 |
+|-------|------|----------|
+| `<img>` | 输入图像在 prompt 里的占位符 | template（写进 prompt）→ 预处理时被展开成 `VAE tokens + <joint_img_sep> + ViT tokens` 序列 |
+| `<joint_img_sep>` | 单张图内 VAE 段与 ViT 段的分隔符 | template |
+| `<timestep>` | 占位 token，word embedding 被 `TimestepEmbedder(t)` 替换 | template（占位）+ **embedding 替换**（条件图传 t=0，生成图传当前 timestep） |
 | `<timestep_r>` | meanflow 用的额外 timestep | 默认未启用 |
 | `<guidance>` | CFG distilled 模型的 guidance scale embedding 占位 | 默认未启用 |
-| `<cfg>` | classifier-free guidance 占位符（uncond 分支用） | CFG 构造负样本时使用 |
+| `<cfg>` | CFG uncond 分支的占位符 | CFG 构造负样本时由 template 注入 |
 
 **(c) 尺寸 / 比例控制 token**
 
-| Token | 作用 | 谁来写 |
-|-------|------|--------|
-| `<img_size_{N}>` | 图像 base size，例如 `<img_size_1024>` | chat template 在生成图 `<boi>` 后直接写入 |
-| `<img_ratio_{0..36}>` | 宽高比索引，对应 `vae_reso_group` 中预定义的 `(H, W)` 表 | AR 在 `<img_size_*>` 之后强制采样产出（greedy） |
+| Token | 作用 | 产出方式 |
+|-------|------|----------|
+| `<img_size_{N}>` | 图像 base size，例如 `<img_size_1024>` | template（生成图 `<boi>` 后由模板写入） |
+| `<img_ratio_{0..36}>` | 宽高比索引，对应 `vae_reso_group` 中预定义的 `(H, W)` 表 | **AR sample (restricted)**：`<img_size_*>` 之后 logits processor 把 vocab 切到 37 个 ratio token 上 argmax |
 
 ratio token 是 AR 与 DiT 的关键桥：
 
@@ -582,6 +605,197 @@ diffusion_prediction = self.ragged_final_layer(...)
 ```
 
 最后 `ragged_final_layer()` 用 `UNetUp final_layer` 把 hidden states 转成 latent patch prediction。这个 prediction 进入 FlowMatch Euler step，反复更新 `x_t`，最后 VAE decode 成图。
+
+## 2.9 DiT attention 优化案例：从 SDPA 到 piecewise FlashAttention
+
+这一节用一个具体优化（[PR #2981 / `857356d5`](https://github.com/vllm-project/vllm-omni/pull/2981)，"hunyuanimage support flash attn"）讲清楚：
+
+- 怎么从模型固有 attention 形态识别出"SDPA 是次优解"这一点；
+- 用 `full_attn_spans` + piecewise 调用 FlashAttention 把它替换掉，同时保证数值等价；
+- 当前实现还能继续往哪里走（FlexAttention / varlen FA / FA3 mask_mod / NPU）。
+
+### 2.9.1 模型固有的 mixed causal/full mask
+
+Hunyuan-Image3 DiT 的 attention mask 不是普通 causal 也不是普通 full，而是**段内 full、段外 causal** 的混合形态。在 [pipeline_hunyuan_image3.py::_prepare_attention_mask_for_generation()](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py) 里可以直接看到这个 mask 的构造：
+
+```python
+attention_mask = torch.ones(seq_len, seq_len, dtype=torch.bool).tril(0).repeat(bsz, 1, 1)
+for image_slice in batch_image_slices[i]:                # 条件图 + 生成图 token 段
+    attention_mask[i, image_slice, image_slice] = True   # 段内打开全连接
+```
+
+直观语义：
+
+| token 段 | mask 形态 |
+|----------|-----------|
+| system / prompt / CoT / 控制 token | causal（下三角） |
+| 条件图块（VAE + ViT） | 段内 bidirectional，段外仍然 causal |
+| 生成图块（timestep + latent tokens） | 段内 bidirectional，段外仍然 causal |
+
+这是模型训练时的固有形态——图像 token 块内部需要互相看见才能学到 2D 空间结构，而 prompt/CoT 之间保留语言模型的因果性。**它不可能被"省略"或"简化"，只能找一个 attention 实现来兼容它。**
+
+### 2.9.2 早期实现：硬编码 SDPA + 显式 2D mask
+
+PR #2981 之前 [`HunyuanImage3Pipeline.__init__()`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py) 里有这段非常显眼的 hack：
+
+```python
+os.environ["DIFFUSION_ATTENTION_BACKEND"] = "TORCH_SDPA"
+logger.info(
+    "Setting attention backend to TORCH_SDPA. "
+    "HunyuanImage3Pipeline only supports TORCH_SDPA to handle mixed causal and full attention."
+)
+```
+
+也就是说：**Omni 的统一 diffusion attention backend 有 FlashAttention 实现，但 Hunyuan-Image3 这一条路径被强制掉到 SDPA**，原因就是上面那个混合 mask。代价：
+
+1. mask 必须显式物化为 `(B, 1, S, S)` bool tensor，**O(S²) 显存**；HunyuanImage 的生成图块就是 4096 个 latent token，加 prompt/CoT 后整段 `S` 轻易过 5k–10k，mask 本身就是百 MB 量级。
+2. SDPA 拿到任意 2D bool mask 时通常落到 `memory_efficient` 或 `math` 后端，**无法吃下 FlashAttention 的 IO-aware kernel**。
+3. 每个 denoise step 都要重算/重用这个 mask（实际是 cache 过的，但仍是巨型 tensor）。
+
+识别这是优化点的关键判据：**mask 本身有非常稀疏的结构（图像 block + causal），却被压扁成了一个 dense 2D bool tensor，扔给了一个不识别 sparsity 的 kernel。**
+
+### 2.9.3 改造：把 mask 分解成 `full_attn_spans`
+
+PR #2981 的改造步骤：
+
+**Step 1 — 在 mask 构造点同时输出 spans**
+
+[`_prepare_attention_mask_for_generation()`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py) 在跑那段 for loop 时本来就知道每张图块的 `start, end`，顺手把它收集成 `full_attn_spans: list[list[tuple[int, int]]]`：
+
+```python
+full_attn_spans: list[list[tuple[int, int]]] = [[] for _ in range(bsz)]
+for i in range(bsz):
+    for image_slice in batch_image_slices[i]:
+        attention_mask[i, image_slice, image_slice] = True
+        full_attn_spans[i].append((int(image_slice.start), int(image_slice.stop)))
+    full_attn_spans[i].sort(key=lambda x: x[0])
+model_kwargs["full_attn_spans"] = full_attn_spans
+```
+
+`full_attn_spans` 的尺寸只跟图块数有关（通常 1–3 个），完全无关 `S`。
+
+**Step 2 — spans 透传到 attention layer**
+
+经过 `prepare_inputs_for_generation()` / `_update_model_kwargs_for_generation()` / `forward()` 一路下传，最终在 [`ImageKVCacheManager.__call__()`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/models/hunyuan_image3/hunyuan_image3_transformer.py) 里塞进 `AttentionMetadata`：
+
+```python
+full_attn_spans = kwargs.get("full_attn_spans", None)
+attn_metadata = AttentionMetadata(
+    attn_mask=attention_mask,
+    full_attn_spans=full_attn_spans,    # ← 关键
+)
+attn_output = self.attn(query, key, value, attn_metadata)
+```
+
+注意 2D `attn_mask` 仍然保留——因为 SDPA backend 还在用它，并且 CFG slicing 等通用逻辑也依赖它。这是个**双轨**策略：spans 走快路径，mask 兜底。
+
+**Step 3 — FlashAttention 拿到 spans 后走 piecewise**
+
+[`FlashAttentionImpl.forward_cuda()`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/attention/backends/flash_attn.py)：
+
+```python
+if full_attn_spans is not None:
+    return piecewise_attn(query, key, value, full_attn_spans, self.softmax_scale, flash_attn_func)
+```
+
+[`piecewise_attn()`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/attention/backends/utils/piecewise_attn.py) 把整段 query 切成若干 segment：
+
+```python
+for s, e, mode in build_segments(spans, query_offset, Sq):
+    out[:, s-q_off:e-q_off] = attn_func(
+        query[:, s-q_off:e-q_off],
+        key[:, :e],                      # KV 始终从 0 切到 e（兼容 cache_prompt_kv 的复用前缀）
+        value[:, :e],
+        causal=(mode == "causal"),       # 纯 causal 或纯 full
+        softmax_scale=softmax_scale,
+    )
+```
+
+也就是：把 mixed mask 分解成一串"纯 causal 段"和"纯 full 段"，每段调一次 FlashAttention。**每次调用都是 FA 喜欢的形状**——没有 mask tensor，只有 `causal` flag。
+
+**Step 4 — 删掉 SDPA 硬编码**
+
+`os.environ["DIFFUSION_ATTENTION_BACKEND"] = "TORCH_SDPA"` 直接删掉，默认走 omni 的 attention backend 路径（CUDA → FlashAttention，NPU → MindIE-SD，等）。
+
+### 2.9.4 正确性等价：bottom-right causal 是关键观察
+
+最容易出错的地方是 **decode 步骤里 `Sq < Sk`**（KV 复用 prompt 段时，query 只覆盖尾部）。`piecewise_attn` 里写法是：
+
+```python
+attn_func(query[:, q_s:q_e], key[:, :e], value[:, :e], causal=True)
+```
+
+每段 query 都对应 K/V 的前缀 `[:e]`，看起来 causal 的对齐很容易错。**关键在于 FlashAttention 的 `causal=True` 是 bottom-right 对齐**：当 `Q.shape[1] < K.shape[1]` 时，causal mask 锚定在右下角，等价于全局 mask 取出 `Q` 对应的下三角行。这正好对应到全局 mixed mask 在该 segment 上的形状。
+
+仓库里 [`tests/diffusion/attention/test_piecewise_attn.py`](https://github.com/vllm-project/vllm-omni/blob/main/tests/diffusion/attention/test_piecewise_attn.py) 把这个等价性做成参数化测试：
+
+- 用一个 SDPA reference（手动构造下三角 + 段内 full 的 2D mask）跑 ground truth；
+- 用同一个 attn_func 跑 piecewise；
+- 对 `(no-spans / span-at-start / multi-spans) × (Sq==Sk / Sq<Sk) × (B=1 / B=2)` 各组合断言数值 close。
+
+`Sq < Sk` 的 case 专门覆盖了 KV cache 复用场景的语义。
+
+### 2.9.5 收益与限制
+
+**收益**
+
+| 维度 | 早期 SDPA | piecewise FA |
+|------|----------|--------------|
+| 显存 mask | `(B, 1, S, S)` 显式 bool tensor | 不传 mask，spans 只有 O(num_blocks) |
+| Kernel | `memory_efficient` 或 `math` | FlashAttention（IO-aware） |
+| `S=8192` 大致量级 | mask ≈ 128 MB（bf16 fp 化更多）+ HBM 反复读写 | mask 不占显存，HBM 流量大幅下降 |
+| Backend 切换 | 硬编码强制 SDPA | 走标准 backend dispatcher，CUDA/NPU/XPU 都能上 |
+| 后续 KV 复用 | 大 mask 每步重算 / cache | spans 跨步不变，构造一次复用所有 denoise step |
+
+**限制 / 当前边界**
+
+| 限制 | 原因 |
+|------|------|
+| `_check_homogeneous` 要求 batch 内 spans 完全一致 | CFG 正/负分支 prompt 同构，满足；异构 batch（不同分辨率/不同条件图数量混批）会触发 raise |
+| segment 数线性增加 kernel launch | 一般 1–3 个 image block，影响有限；但极端多块（多条件图编辑）会有 overhead |
+| 只在 `forward_cuda()` 走 piecewise | `forward_xpu` / `forward_npu` 仍走 mask 路径，NPU 还落在 SDPA |
+| 仍然需要构造 2D `attention_mask` | 为了 SDPA fallback + CFG slicing 复用；理论上可以省 |
+
+### 2.9.6 还能继续优化吗——FlexAttention 视角
+
+你提到"本质上这个东西像 flex attention"——非常贴。把 piecewise 这一招翻译成 FlexAttention 语义就是：
+
+```python
+def mask_mod(b, h, q_idx, kv_idx):
+    # 默认 causal
+    causal = kv_idx <= q_idx
+    # 任意一个 span 同时包含 q_idx 与 kv_idx → 段内 full
+    in_block = any((s <= q_idx < e) & (s <= kv_idx < e) for s, e in spans[b])
+    return causal | in_block
+
+block_mask = create_block_mask(mask_mod, B, H, S, S)
+out = flex_attention(q, k, v, block_mask=block_mask)
+```
+
+相对当前 piecewise 的潜在好处：
+
+1. **一次 kernel 替代 N 段调用**：消掉 segment 数对 launch overhead 的依赖。
+2. **天然支持异构 batch**：`mask_mod` 拿 `b` 做索引，per-sample spans 不需要 `_check_homogeneous`。
+3. **block-sparse 自动跳过全零块**：FlexAttention 的 `BlockMask` 会按 block-level 跳过整块不参与计算的 KV，对长 prompt + 多 image block 的场景更友好。
+4. **score_mod 可扩展**：之后若需要 attention bias（例如训练侧用到的 logit scaling、ALiBi 风格 mask）可以无侵入加上。
+
+代价 / 风险：
+
+- FlexAttention 强依赖 `torch.compile` 与较新 PyTorch（≥ 2.5）；vllm-omni 的 vLLM v1 路径已经走 `support_torch_compile`，融入难度可控，但要确认 `block_mask` 不会在每个 denoise step 重新 trace（spans 跨 step 不变，应该可以缓存一次）。
+- 对 GPU 老世代或 NPU/XPU 没有等价 fallback，需要保留现有的 piecewise / SDPA 路径，dispatcher 复杂度上升。
+
+**其它平行方向**：
+
+- **varlen FlashAttention with `cu_seqlens`**：把段 layout 编码成 cumulative seqlens 一次 call。但 varlen FA 对"段内 full / 段间 causal"这种 mixed mode 没有原生 flag，需要手工 trick，性价比不如 FlexAttention。
+- **FA3 mask_mod**：FA3 的 mask_mod API 已经很接近 FlexAttention，且不强依赖 compile；如果性能很关键、目标硬件是 Hopper+，是值得评估的中间方案。
+- **NPU 路径补齐**：当前 NPU 仍然落在 SDPA `forward_npu`（`full_qk` mask layout），可以补一个段感知的 NPU 实现（例如 MindIE-SD 的 mask 形态或 attention_forward 多次调用），让 NPU 侧吃到同样收益。
+- **省掉显式 2D mask**：把 SDPA backend 也改成"如果有 spans 就内部构造 mask，外部不再物化"，可以把 host 侧那块大 bool tensor 也省掉，配合 KV reuse 路径更顺。
+
+如果要排个优先级，我的建议是：
+
+1. **NPU 补齐** —— 用户最直接受益，现有 piecewise 框架已就绪。
+2. **FlexAttention 切换** —— 长期清爽，并解锁异构 batch 的可能性。
+3. **2D mask 去物化** —— 顺手优化，代码改动小。
 
 ---
 
