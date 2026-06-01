@@ -703,6 +703,126 @@ sequenceDiagram
 
 这些测试说明当前实现不只是“能起多进程”，还覆盖了注册、心跳、LB、headless 启动、多模态 cache scope、Hunyuan KV reuse 等关键路径。
 
+## 6.5 AR KV reuse 前后对比: 真正省掉了什么时间
+
+`#3346` / `5b61e7f1` 引入的 Hunyuan Image AR + DiT KV reuse，容易被误解成“diffusion 少跑了几步”。实际并不是。它真正节约的是：
+
+> **DiT stage 对 AR 已经算过的静态多模态前缀，再做一次 transformer prefill 的时间。**
+
+这个前缀通常包括 system prompt、think/recaption、ratio 相关 token，以及 image editing 场景中的条件图上下文。diffusion denoise step 数、每步 image latent token 的计算、scheduler step 和 VAE decode 都没有被跳过。
+
+### 6.5.1 KV reuse 之前
+
+没有 AR KV reuse 时，AR 只把文本/ratio/条件信息传给 DiT。DiT 需要重新构造完整输入，并在第一个 denoise step 中重新计算整段 prompt/prefix 的 K/V。DiT 内部虽然已有 prompt KV cache，但它只能缓存 **DiT 自己第一步算出来的 KV**，所以第一步的重复 prefill 成本仍然存在。
+
+```mermaid
+flowchart LR
+    subgraph Before["KV reuse 之前"]
+        A0["AR stage<br/>生成 CoT / recaption / ratio"]
+        A1["只传文本和 payload"]
+        D0["DiT stage<br/>重新构造完整序列"]
+        D1["First denoise step<br/>计算 prefix + image tokens + suffix"]
+        D2["缓存 DiT 自己算出的 prompt KV"]
+        D3["后续 denoise steps<br/>复用 DiT prompt KV"]
+
+        A0 --> A1 --> D0 --> D1 --> D2 --> D3
+    end
+```
+
+可以把它理解成：
+
+```text
+DiT first step cost ~= compute(prefix + current_image_tokens + suffix)
+DiT later steps cost ~= compute(current_image_tokens) + reuse(DiT prompt KV)
+```
+
+这里的浪费点是：**AR 刚刚已经在同构/兼容的 transformer 层里处理过这段 prefix，但 DiT 第一遍仍然要再算一次。**
+
+### 6.5.2 KV reuse 之后
+
+引入 KV reuse 后，AR stage 在结束时把自己的 KV cache 通过 `past_key_values` 交给下游。DiT stage 从 request 里取出每层 key/value，按 `think_recaption_end_pos` 算出可复用长度，然后把这段 AR KV 注入到 DiT 的 `ImageKVCacheManager` 中。
+
+更关键的是，DiT 会把已经复用的 prefix 从自己的输入里切掉：
+
+```text
+input_ids       = input_ids[:, positive_reuse_len:]
+attention_mask  = attention_mask[:, :, positive_reuse_len:, :]
+position_ids    = position_ids[:, positive_reuse_len:]
+image_mask      = image_mask[:, positive_reuse_len:]
+```
+
+因此 DiT 第一个 denoise step 不再为这段 prefix 重新跑 transformer forward，而是在 attention 的 K/V 侧直接接上 AR 传来的 cache。
+
+```mermaid
+flowchart LR
+    subgraph After["KV reuse 之后"]
+        A0["AR stage<br/>生成 CoT / recaption / ratio"]
+        A1["抽取 AR KV<br/>past_key_values"]
+        T0["KV transfer<br/>RDMA / connector"]
+        D0["DiT stage<br/>接收 payload + AR KV"]
+        D1["计算 positive_reuse_len"]
+        D2["注入每层 AR KV"]
+        D3["截断 DiT 输入中的 reused prefix"]
+        D4["First denoise step<br/>只算剩余 token"]
+        D5["缓存 AR KV + DiT prompt KV"]
+        D6["后续 denoise steps<br/>复用完整 prompt KV"]
+
+        A0 --> A1 --> T0 --> D0 --> D1 --> D2 --> D3 --> D4 --> D5 --> D6
+    end
+```
+
+新的成本模型更接近：
+
+```text
+DiT first step cost ~= transfer(prefix KV) + compute(remaining_tokens)
+DiT later steps cost ~= compute(current_image_tokens) + reuse(AR KV + DiT prompt KV)
+```
+
+也就是说，性能提升来自 **把一段重的 DiT prefix forward，替换成一次 KV 传输和拼接**。当前 Hunyuan Image 的 AR 和 DiT 都基于兼容的 `HunyuanImage3ForCausalMM` 层结构，这让 AR 侧产出的 per-layer KV 可以被 DiT 侧作为同一段 prefix 的 attention K/V 使用。
+
+### 6.5.3 CFG 下为什么还要做 negative prefill
+
+CFG 场景里 positive 和 negative prompt 不完全一样，不能把 positive AR KV 原样当成 negative KV。这里的设计是：
+
+1. positive 分支直接复用 AR KV。
+2. negative 分支复用 shared prefix。
+3. 对 positive/negative 不同的那一小段 negative token 做一次额外 prefill，拼出 negative AR KV。
+
+测试里覆盖的布局是：
+
+```text
+positive: [pos_ar(10) | prompt(3) | current(8) | suffix(3)]
+negative: [neg_ar(10) | prompt(3) | current(8) | suffix(3)]
+
+neg_ar = [shared_prefix_from_pos_ar(6) | neg_prefill_tokens(4)]
+```
+
+这个设计的取舍是：共享部分继续省掉重复计算，negative 独有部分补算，保证 CFG 语义正确。
+
+### 6.5.4 什么时候收益明显
+
+收益主要取决于三件事：
+
+| 因素 | 影响 |
+|------|------|
+| reusable prefix 长度 | prefix 越长，省掉的 DiT prefill 越多 |
+| DiT 单层计算成本 | DiT 越重，重复 forward 越贵 |
+| KV transfer 成本 | RDMA/同机共享越快，越容易覆盖传输开销 |
+
+因此它更适合 Hunyuan Image editing、长 COT/recaption、多模态条件较重、1AR + 多 DiT 分布式部署的场景。如果 prompt 很短，或者跨机 KV transfer 很慢，收益会变小。
+
+### 6.5.5 这个特性没有省掉什么
+
+| 没有省掉的部分 | 原因 |
+|----------------|------|
+| diffusion denoise step 数 | 仍然要按 `num_inference_steps` 执行 |
+| 每步 image latent token 计算 | 图像 token 每个 timestep 都会变化 |
+| VAE decode | KV reuse 只作用在 transformer attention prefix |
+| scheduler step | diffusion 调度逻辑不变 |
+| KV 传输本身 | 只是用传输和拼接替代重复计算，不是零成本 |
+
+一句话总结：**AR KV reuse 不是让 DiT 少生成，而是让 DiT 不再为 AR 已经处理过的静态前缀重复 prefill。**
+
 ---
 
 # 第七部分: QA
@@ -731,19 +851,23 @@ sequenceDiagram
 
 当前常规路径不是广播，而是 **一个请求选择一个下游 replica**。Mooncake connector 代码里也明确当前 key 语义偏 1 sender -> 1 receiver。要做同一请求多 DiT 并行生成多个候选图，需要额外设计 key、buffer 生命周期和结果聚合策略。
 
-## Q7: DiT replica 挂了会自动把请求迁移到别的 DiT 吗？
+## Q7: AR KV reuse 真正节约的时间是什么？
+
+节约的是 **DiT 第一个 denoise step 中，对 AR 已经算过的静态 prefix 再做一次 prefill 的时间**。KV reuse 之前，DiT 只拿到 AR 生成的文本/payload，需要自己重新算完整 prefix；KV reuse 之后，AR 把 per-layer KV 发给 DiT，DiT 注入 KV 后把这段 prefix 从自己的输入里切掉，只计算剩余 token。它不会减少 denoise step 数，也不会省掉 VAE decode。
+
+## Q8: DiT replica 挂了会自动把请求迁移到别的 DiT 吗？
 
 不会透明迁移进行中的请求。replica heartbeat 超时后会从 active list 中消失，head 会清理对应 affinity，并让受影响请求失败。新的请求会避开这个 replica；旧请求是否重试由上层策略决定。
 
-## Q8: connector 和 queue 是什么关系？
+## Q9: connector 和 queue 是什么关系？
 
 queue 负责轻量通知，connector 负责大对象传输。发送方先 `connector.put()` 存 payload/KV，再在 queue 里放一个包含 `request_id` 和 metadata 的 notify。接收方看到 notify 后再 `connector.get()` 取实际数据。
 
-## Q9: Hunyuan Image 中 stage0 为什么还可以 `final_output: text`？
+## Q10: Hunyuan Image 中 stage0 为什么还可以 `final_output: text`？
 
 这是模型语义上的特殊性：Hunyuan AR stage 会生成 recaption/CoT/ratio token 等结构化文本；在 AR-only 或调试场景下这些文本也可以作为输出。但在 AR+DiT pipeline 中，这些输出会被 bridge 和 connector 继续喂给 DiT stage，最终输出图片。
 
-## Q10: 什么时候用 `random`，什么时候用 `least-queue-length`？
+## Q11: 什么时候用 `random`，什么时候用 `least-queue-length`？
 
 如果下游 stage 请求耗时接近，`random` 或 `round-robin` 足够。如果是 DiT、Code2Wav 这类请求耗时差异大、排队时间显著的 stage，`least-queue-length` 更符合直觉，因为它会避开当前 in-flight 更多的 replica。
 
