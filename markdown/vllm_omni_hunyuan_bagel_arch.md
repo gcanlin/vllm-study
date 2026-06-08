@@ -636,6 +636,51 @@ for image_slice in batch_image_slices[i]:                # 条件图 + 生成图
 
 这是模型训练时的固有形态——图像 token 块内部需要互相看见才能学到 2D 空间结构，而 prompt/CoT 之间保留语言模型的因果性。**它不可能被"省略"或"简化"，只能找一个 attention 实现来兼容它。**
 
+#### 形象化：一个 20-token 例子
+
+抽象的"段内 full + 段外 causal"听起来绕，把 Q×K 矩阵画出来一眼就清楚。假设 `S=20`，序列布局如下：
+
+```text
+positions:  0  1  2  3   4  5  6  7  8  9   10 11 12  13 14 15 16 17  18 19
+            └── text ──┘ └──── img 1 ─────┘ └─text─┘  └──── img 2 ────┘ └text┘
+
+full_attn_spans = [(4, 10), (13, 18)]
+```
+
+对应的 mask（`#` = 可 attend，`.` = mask 掉；Q 是行，K 是列）：
+
+```text
+           K col:  0 1 2 3 | 4 5 6 7 8 9 | 10 11 12 | 13 14 15 16 17 | 18 19
+Q row
+ 0  text         | # . . . | . . . . . . |  . . .   |  . . . . .     |  . .
+ 1  text         | # # . . | . . . . . . |  . . .   |  . . . . .     |  . .
+ 2  text         | # # # . | . . . . . . |  . . .   |  . . . . .     |  . .
+ 3  text         | # # # # | . . . . . . |  . . .   |  . . . . .     |  . .
+ 4  img 1        | # # # # | # # # # # # |  . . .   |  . . . . .     |  . .   ┐
+ 5  img 1        | # # # # | # # # # # # |  . . .   |  . . . . .     |  . .   │ shelf 1
+ 6  img 1        | # # # # | # # # # # # |  . . .   |  . . . . .     |  . .   │ (full)
+ 7  img 1        | # # # # | # # # # # # |  . . .   |  . . . . .     |  . .   │ 块内
+ 8  img 1        | # # # # | # # # # # # |  . . .   |  . . . . .     |  . .   │ 互看
+ 9  img 1        | # # # # | # # # # # # |  . . .   |  . . . . .     |  . .   ┘
+10  text         | # # # # | # # # # # # |  # . .   |  . . . . .     |  . .
+11  text         | # # # # | # # # # # # |  # # .   |  . . . . .     |  . .
+12  text         | # # # # | # # # # # # |  # # #   |  . . . . .     |  . .
+13  img 2        | # # # # | # # # # # # |  # # #   |  # # # # #     |  . .   ┐
+14  img 2        | # # # # | # # # # # # |  # # #   |  # # # # #     |  . .   │ shelf 2
+15  img 2        | # # # # | # # # # # # |  # # #   |  # # # # #     |  . .   │ (full)
+16  img 2        | # # # # | # # # # # # |  # # #   |  # # # # #     |  . .   │
+17  img 2        | # # # # | # # # # # # |  # # #   |  # # # # #     |  . .   ┘
+18  text         | # # # # | # # # # # # |  # # #   |  # # # # #     |  # .
+19  text         | # # # # | # # # # # # |  # # #   |  # # # # #     |  # #
+```
+
+两个视觉特征：
+
+1. **整体是下三角 causal**——主对角线 `(i, i)` 从左上一路延伸到 `(19, 19)`。
+2. **图块位置叠加两个矩形 shelf**：行 4–9 把列 4–9 推平成方块（block 1），行 13–17 把列 13–17 推平成方块（block 2）。这就是"段内 full"。
+
+SDPA 处理这张图就是直接吃 `(20, 20)` 的 bool 数组——400 个 bool 位置里绝大多数（左下半）只是平凡的 causal，**根本不需要显式 mask**，但 SDPA 必须把每一位都走一遍。
+
 ### 2.9.2 早期实现：硬编码 SDPA + 显式 2D mask
 
 PR #2981 之前 [`HunyuanImage3Pipeline.__init__()`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/models/hunyuan_image3/pipeline_hunyuan_image3.py) 里有这段非常显眼的 hack：
@@ -719,6 +764,37 @@ for s, e, mode in build_segments(spans, query_offset, Sq):
 
 `os.environ["DIFFUSION_ATTENTION_BACKEND"] = "TORCH_SDPA"` 直接删掉，默认走 omni 的 attention backend 路径（CUDA → FlashAttention，NPU → MindIE-SD，等）。
 
+#### 数据流对比：SDPA vs piecewise
+
+把 2.9.1 那个 20-token 例子分别送进两条路径，tensor 形状的根本差异：
+
+```text
+SDPA 路径（1 次 kernel 调用）             piecewise FA 路径（5 次 kernel 调用）
+─────────────────────────────             ─────────────────────────────────────
+ Q:    (B, 20, H, D)                       call A  Q[:, 0:4],   K[:, :4],  causal=True
+ K:    (B, 20, H, D)                       call B  Q[:, 4:10],  K[:, :10], causal=False
+ V:    (B, 20, H, D)                       call C  Q[:, 10:13], K[:, :13], causal=True
+ mask: (B, 1, 20, 20) bool   ← 400 bits    call D  Q[:, 13:18], K[:, :18], causal=False
+                                           call E  Q[:, 18:20], K[:, :20], causal=True
+ → SDPA mem-efficient / math backend       → 全部是 FlashAttention 的 native shape
+                                            (纯 causal 或 dense full，不传 mask)
+```
+
+每段的形状参数：
+
+| Segment | mode   | Q rows  | shape Q         | K cols   | shape K, V       | causal flag |
+|---------|--------|---------|-----------------|----------|------------------|-------------|
+| A       | causal | 0..3    | `(B, 4, H, D)`  | 0..3     | `(B, 4, H, D)`   | True (Sq=Sk) |
+| B       | full   | 4..9    | `(B, 6, H, D)`  | 0..9     | `(B, 10, H, D)`  | False |
+| C       | causal | 10..12  | `(B, 3, H, D)`  | 0..12    | `(B, 13, H, D)`  | True (Sq<Sk, BR-anchored) |
+| D       | full   | 13..17  | `(B, 5, H, D)`  | 0..17    | `(B, 18, H, D)`  | False |
+| E       | causal | 18..19  | `(B, 2, H, D)`  | 0..19    | `(B, 20, H, D)`  | True (Sq<Sk, BR-anchored) |
+
+两个易错点：
+
+- **K, V 永远从 0 切到 `e`**，不是只切自己 segment 的 K。这样既覆盖 causal 段需要看的前缀，也覆盖 full 段块内邻居互看的需求。如果改成 `key[:, s:e]`，causal 锚定关系就错了（见 [2.9.4](#294-正确性等价bottom-right-causal-是关键观察)）。
+- **causal flag 只有 True / False 两态**。"段内 full" 和 "段外 causal" 都映射到 FA 原生支持的 mode，没有任何中间状态——这就是为什么 mask tensor 可以彻底扔掉。
+
 ### 2.9.4 正确性等价：bottom-right causal 是关键观察
 
 最容易出错的地方是 **decode 步骤里 `Sq < Sk`**（KV 复用 prompt 段时，query 只覆盖尾部）。`piecewise_attn` 里写法是：
@@ -728,6 +804,37 @@ attn_func(query[:, q_s:q_e], key[:, :e], value[:, :e], causal=True)
 ```
 
 每段 query 都对应 K/V 的前缀 `[:e]`，看起来 causal 的对齐很容易错。**关键在于 FlashAttention 的 `causal=True` 是 bottom-right 对齐**：当 `Q.shape[1] < K.shape[1]` 时，causal mask 锚定在右下角，等价于全局 mask 取出 `Q` 对应的下三角行。这正好对应到全局 mixed mask 在该 segment 上的形状。
+
+把 segment B 和 segment C 单独画出来对照看，"FA 看到的 mask"和"全局 mask 截取的对应 patch"是同一张图。
+
+**Segment B（full，Sq=6, Sk=10，对应全局 mask 第 4–9 行 × 第 0–9 列）**：
+
+```text
+        K col:  0 1 2 3 4 5 6 7 8 9
+Q row
+ 4  img 1     | # # # # # # # # # #     FA call: causal=False
+ 5  img 1     | # # # # # # # # # #
+ 6  img 1     | # # # # # # # # # #     该 patch 已被 shelf 1 推平成全 1，
+ 7  img 1     | # # # # # # # # # #     与全局 mask 第 4..9 行剪出来的形状一致。
+ 8  img 1     | # # # # # # # # # #
+ 9  img 1     | # # # # # # # # # #
+```
+
+**Segment C（causal，Sq=3 < Sk=13，对应全局 mask 第 10–12 行 × 第 0–12 列）**：
+
+```text
+        K col:  0 1 2 3 4 5 6 7 8 9 10 11 12
+Q row                                ▼  ▼  ▼
+10  text      | # # # # # # # # # # |#  .  .       FA call: causal=True
+11  text      | # # # # # # # # # # |#  #  .       Sq < Sk，bottom-right 锚定:
+12  text      | # # # # # # # # # # |#  #  #       Q[local i] 看到 K[: Sk-Sq+i+1]
+                                     │
+                                     └── 右上角 2×2 三角是真正被 mask 掉的部分
+```
+
+把全局 mask 第 10–12 行剪下来（cols 0..12），就是这 3 行的形状。**bottom-right causal 不需要任何额外处理**——FA 的 `causal=True` 在 `Sq != Sk` 时本来就锚到右下角，正好满足 piecewise 的对齐需求。
+
+反过来看：如果 piecewise 把 K 切成 `key[:, s:e]`（只看 segment 自己的 K），那 Sq=Sk=3 就退化成普通正方形 causal，**段内 Q 完全看不到全局 prompt 前缀**，结果会严重偏离 SDPA。这就是 [`piecewise_attn.py`](https://github.com/vllm-project/vllm-omni/blob/main/vllm_omni/diffusion/attention/backends/utils/piecewise_attn.py) 里 K 必须是 `key[:, :e]` 而不是 `key[:, s:e]` 的原因。
 
 仓库里 [`tests/diffusion/attention/test_piecewise_attn.py`](https://github.com/vllm-project/vllm-omni/blob/main/tests/diffusion/attention/test_piecewise_attn.py) 把这个等价性做成参数化测试：
 
